@@ -1,0 +1,53 @@
+---
+description: Find and check domain names — availability in bulk, first-year and renewal prices. Use when the user wants domain ideas, wants to know whether a domain is free, or is naming a project.
+alwaysApply: false
+---
+
+# Domain Finder
+
+Tools live in `tools/domain-finder-skill/`. Adjust the paths below if you
+cloned it somewhere else.
+
+## Check availability
+
+```bash
+python3 tools/domain-finder-skill/scripts/check-domains.py --tlds com,ai,io \
+  snapkit vaultly forgely --available-only
+```
+
+Output includes first-year **and renewal** price. The renewal column matters:
+`.xyz` costs $2.04 the first year and $12.98 every year after.
+
+Useful flags: `--available-only`, `--max-price 20`, `--json`, `--no-cache`,
+`--plan` (preview request cost without spending it).
+
+## Generate candidates
+
+```bash
+python3 tools/domain-finder-skill/scripts/gen-names.py \
+  --roots snap,clip,vault --suffixes ify,ly,kit --max-len 6 \
+  | python3 tools/domain-finder-skill/scripts/check-domains.py \
+      --tlds com --available-only
+```
+
+Patterns: `root+suffix`, `prefix+root`, `prefix+root+suffix`, `root+root`,
+`blend`.
+
+## Rules
+
+- **Pass the whole candidate list in one call.** One call with 60 domains costs
+  3 requests; 60 single-domain calls cost 60 and will get throttled. Never loop
+  the script over a list.
+- **Never guess availability.** If the tool is not configured, say so and point
+  at `tools/domain-finder-skill/references/environment.md`. Do not answer from
+  memory or from a web search.
+- **Never present an unresolved lookup as available.** `lookup failed`,
+  `unknown`, and `no RDAP for this TLD` are all "don't know", not "yes". The
+  script exits `3` when anything is unresolved.
+- **Check brand collisions** before recommending a name. An available domain
+  that collides with an established product is an SEO fight the user did not
+  choose.
+- **Read-only.** This never buys, transfers, or changes DNS. Purchases happen at
+  the user's registrar.
+
+Full workflow: `tools/domain-finder-skill/AGENTS.md`

@@ -2,9 +2,11 @@
 
 **English** · [简体中文](README.zh-CN.md)
 
-A Claude Code skill for finding domain names you can actually register:
-generate candidates, check availability in bulk, and see both the first-year
-and the renewal price before you commit.
+Find domain names you can actually register. Generate candidates, check
+availability in bulk, and see the **renewal** price — not just the promo price.
+
+Works with Claude Code, Codex, Cursor, Copilot, Gemini CLI, Aider, Windsurf and
+Zed. Or just use it from your terminal.
 
 ```console
 $ python3 scripts/check-domains.py --tlds com,ai,io,dev,xyz zqxjkbwrm
@@ -18,30 +20,25 @@ $ python3 scripts/check-domains.py --tlds com,ai,io,dev,xyz zqxjkbwrm
 | zqxjkbwrm.xyz   | available | $2.04         | $12.98  | renewal 6.4x the first year |
 ```
 
-That last column is the point. `.xyz` looks like a $2 domain and is a $13
-domain.
+That last column is the point. `.xyz` looks like a $2 domain. It's a $13 domain.
 
-## Why this exists
+## Contents
 
-Most domain checkers get one of these wrong:
+- [Quick start](#quick-start)
+- [Install for your AI tool](#install-for-your-ai-tool)
+- [Common tasks](#common-tasks)
+- [Command reference](#command-reference)
+- [What it's built on](#what-its-built-on)
+- [Design notes](#design-notes)
+- [Documentation](#documentation)
+- [Scope and limits](#scope-and-limits)
+- [Contributing](#contributing)
 
-- **They show you a promo price.** A `.xyz` at $2.04 renewing at $12.98 is a 6.4x
-  jump. This shows both columns and flags the cliff.
-- **They lie about availability.** RDAP-based checkers report `github.io` as
-  available, because `.io` publishes no RDAP server and "no server" is
-  indistinguishable from "no record" if you don't check first. This checks first,
-  and says *unsupported* rather than guessing.
-- **They ignore rate limits.** An agent runs the checker many times per session,
-  sometimes in parallel. An in-process sleep protects none of those runs from
-  each other. This persists its request budget to disk under a lock.
-- **They have opinions about your name.** No length rules, no price ceilings, no
-  TLD ranking here. Those are yours.
+## Quick start
 
-## Requirements
+Needs Python 3.8+. No third-party packages.
 
-Python 3.8+. No third-party packages — standard library only.
-
-## Install
+**1. Clone**
 
 ```bash
 git clone https://github.com/meepo-it/domain-finder-skill.git
@@ -49,56 +46,117 @@ cd domain-finder-skill
 cp .env.example .env
 ```
 
-Put a Spaceship API key and secret in `.env` — free account, no minimum
-balance, no IP allowlist:
+**2. Add a key**
+
+Sign up at [Spaceship](https://www.spaceship.com/) — free, no minimum balance,
+no IP allowlist — and create a key in the
+[API Manager](https://www.spaceship.com/application/api-manager/). Put both
+values in `.env`:
 
 ```bash
 SPACESHIP_API_KEY=your_key
 SPACESHIP_API_SECRET=your_secret
 ```
 
-Verify:
+**3. Verify**
 
 ```bash
-python3 scripts/check-domains.py example.com   # should report: taken
+python3 scripts/check-domains.py example.com     # → taken
 ```
 
-No account handy? `DOMAIN_FINDER_ALLOW_RDAP=1` enables a keyless fallback — but
-read [the caveat](references/providers.md#rdap-no-credentials) first, because it
-cannot answer for `.io` or `.co`.
+That's it.
 
-Alternatives and full details: [`references/environment.md`](references/environment.md).
+<details>
+<summary>Don't want to sign up for anything?</summary>
 
-### Use it as a Claude Code skill
+Set `DOMAIN_FINDER_ALLOW_RDAP=1` in `.env` to use a keyless fallback that
+queries registry data directly.
+
+It cannot answer for `.io` or `.co` — those registries publish no RDAP server —
+and it's one request per domain, so it's slow. Fine for trying things out.
+[Details](references/providers.md#rdap-no-credentials).
+
+</details>
+
+Other providers (NameSilo, Dynadot) and every configuration option:
+[`references/environment.md`](references/environment.md).
+
+## Install for your AI tool
+
+Clone the repo somewhere your project can reach — these examples assume
+`tools/domain-finder-skill/`.
+
+### Claude Code
+
+Symlink it into your skills directory. It loads on demand, so it costs no
+context until it's used:
 
 ```bash
-ln -s "$(pwd)" ~/.claude/skills/domain-finder
+ln -s "$PWD/tools/domain-finder-skill" ~/.claude/skills/domain-finder
 ```
 
-Then ask Claude for domain ideas and it will pick the skill up. `SKILL.md` is
-the entry point.
+Then just ask for domain ideas. Entry point is [`SKILL.md`](SKILL.md).
 
-## Usage
+### Codex, Gemini CLI, Aider, Windsurf, Zed
+
+These read [`AGENTS.md`](AGENTS.md), the cross-tool standard. Append the
+pointer snippet to your project's `AGENTS.md`:
 
 ```bash
-# specific domains
-python3 scripts/check-domains.py acme.com acme.io
+cat tools/domain-finder-skill/install/agents-snippet.md >> AGENTS.md
+```
 
-# bare names crossed with TLDs
+Appends as-is, nothing to edit. For a global install instead of per-project,
+append it to `~/.codex/AGENTS.md`.
+
+### Cursor
+
+Copy the ready-made rule. It uses `alwaysApply: false` with a description, so
+Cursor pulls it in only when the conversation is about naming — no permanent
+context cost:
+
+```bash
+mkdir -p .cursor/rules
+cp tools/domain-finder-skill/install/domain-finder.mdc .cursor/rules/
+```
+
+Cursor also reads `AGENTS.md`, so the snippet above works too. The rule file
+gives you finer control over when it activates.
+
+### GitHub Copilot
+
+```bash
+mkdir -p .github
+cat tools/domain-finder-skill/install/agents-snippet.md >> .github/copilot-instructions.md
+```
+
+### Anything else
+
+The scripts are ordinary CLI tools. Point your agent at
+[`AGENTS.md`](AGENTS.md) and it has everything it needs.
+
+## Common tasks
+
+**Check specific domains**
+
+```bash
+python3 scripts/check-domains.py acme.com acme.io acme.dev
+```
+
+**Cross names with TLDs**
+
+```bash
 python3 scripts/check-domains.py --tlds com,ai,io snapkit vaultly forgehub
+```
 
-# only what's registrable, under budget
+**Only show what's registrable, under budget**
+
+```bash
 python3 scripts/check-domains.py --tlds com snapkit vaultly \
   --available-only --max-price 20
-
-# preview request cost before a big sweep
-python3 scripts/check-domains.py --plan --tlds com,ai,io,dev $(cat names.txt)
-
-# machine-readable
-python3 scripts/check-domains.py --json acme.com
 ```
 
-### Generate candidates
+**Generate candidates, then check them**
 
 ```bash
 python3 scripts/gen-names.py --roots snap,clip,vault,pix --suffixes ify,ly,kit \
@@ -113,14 +171,30 @@ remock  reclip  reblur
 unmock  unclip  unblur
 ```
 
-Patterns: `root+suffix`, `prefix+root`, `prefix+root+suffix`, `root+root`,
-`blend` (overlap two roots — `design` + `ignite` → `designite`).
+Patterns: `root+suffix` · `prefix+root` · `prefix+root+suffix` · `root+root` ·
+`blend` (overlaps two roots — `design` + `ignite` → `designite`).
 
-More constraint-to-command mappings — "only .com", "max 6 characters",
-"ending in -ify", "under $20" — in
+**Preview cost before a big sweep**
+
+```bash
+python3 scripts/check-domains.py --plan --tlds com,ai,io,dev $(cat names.txt)
+```
+
+```console
+provider:        spaceship
+domains:         50 (0 cached, 50 to query)
+requests:        3
+budget:          25 requests / 30s
+estimated time:  1s
+```
+
+More constraint-to-command mappings — "only .com", "max 6 characters", "ending
+in -ify", "under $20" — in
 [`references/query-recipes.md`](references/query-recipes.md).
 
-## Options
+## Command reference
+
+### `check-domains.py`
 
 | Flag | Effect |
 |---|---|
@@ -133,63 +207,129 @@ More constraint-to-command mappings — "only .com", "max 6 characters",
 | `--json` | JSON output |
 | `--quiet` | Suppress progress messages |
 
+Reading the status column:
+
+| Value | Meaning |
+|---|---|
+| `available` | No registration record — registrable |
+| `taken` | Registered |
+| `no RDAP for this TLD` | The keyless fallback can't answer. **Not a "no"** |
+| `lookup failed` | Errored after retries. **Not confirmed available** |
+| `unknown` | Unexpected provider response |
+
 Exit codes: `0` all resolved · `1` no valid input · `2` no provider configured ·
 `3` partial — some lookups failed and are **not** confirmed available.
 
-## How it works
+### `gen-names.py`
+
+| Flag | Effect |
+|---|---|
+| `--roots snap,clip` | Word roots (required) |
+| `--prefixes up,re` | Prefixes |
+| `--suffixes ify,ly` | Suffixes |
+| `--patterns root+suffix,blend` | Which combinations to emit |
+| `--min-len N` / `--max-len N` | Length filter |
+| `--no-filter` | Skip the pronounceability filter |
+
+## What it's built on
 
 | Concern | Source | Credentials |
 |---|---|---|
-| Availability | Spaceship (20 domains/request) | free account |
+| Availability | Spaceship — 20 domains/request | free account |
 | — alternative | NameSilo | free account |
 | — fallback | RDAP via `rdap.org` | **none** |
 | Pricing | Porkbun's public TLD price list — 907 TLDs | **none** |
-| — optional | Dynadot, exact per-domain quotes | free account |
+| — optional | Dynadot — exact per-domain quotes | free account |
 
-Data sources are pluggable and pricing works out of the box, because Porkbun
-publishes its whole price list at an endpoint that needs no authentication.
+Pricing works with zero configuration because Porkbun publishes its entire
+price list at an endpoint that requires no authentication.
 
-Eleven providers were surveyed — what each requires, what it actually returns,
-and which ones have traps — in
+Eleven providers were surveyed, each tested where possible — what they require,
+what they actually return, which ones have traps:
 [`references/providers.md`](references/providers.md).
 
-## Rate limiting
+## Design notes
 
-The part most tools skip. Briefly:
+Three things this handles that similar tools usually don't.
 
-- **Budgets persist to disk**, so a request spent by one run is spent as far as
-  the next run is concerned.
-- **`flock` guards the state**, so parallel agents take turns instead of each
-  reading "0 used" and firing at once.
-- **A 429 parks every process**, via a shared cooldown, honouring `Retry-After`
+<details>
+<summary><b>Renewal prices, not just promo prices</b></summary>
+
+A `.xyz` costs $2.04 the first year and $12.98 every year after — a 6.4x jump.
+`.io` nearly doubles. Showing only the first-year price is actively misleading,
+so both columns are always present and jumps above 1.5x get flagged in the
+`Note` column.
+
+</details>
+
+<details>
+<summary><b>The RDAP trap that makes free checkers lie</b></summary>
+
+RDAP-based checkers commonly report `github.io` as **available**. Here's why:
+
+| Domain | Reality | rdap.org returns |
+|---|---|---|
+| `openai.com` | registered | 200 ✅ |
+| `vercel.app` | registered | 200 ✅ |
+| **`github.io`** | **registered** | **404 ← reads as "available"** |
+| **`google.co`** | **registered** | **404 ← reads as "available"** |
+
+A TLD with no RDAP server returns 404 — identical to "no registration record".
+`.io` and `.co` publish none.
+
+This repo fetches the IANA bootstrap list (1200 TLDs with RDAP), caches it for
+a week, and reports `no RDAP for this TLD` instead of guessing.
+
+</details>
+
+<details>
+<summary><b>Rate limiting that survives process exit</b></summary>
+
+An agent invokes the checker many times per session — generate, check, refine,
+check again — and sometimes runs several agents in parallel. Each invocation is
+a separate process, so an in-process sleep protects none of them from each
+other.
+
+What this does instead:
+
+- **Request budgets persist to disk.** Spent by one run is spent for the next.
+- **`flock` guards the state**, so parallel processes take turns instead of each
+  reading "0 used" and firing simultaneously.
+- **A 429 parks every process** via a shared cooldown, honouring `Retry-After`
   with exponential backoff and jitter.
-- **Results are cached for an hour**, so overlapping re-checks cost nothing.
-  A 50-domain re-check: 26.8s → 0.16s, 3 requests → 0.
-- **Failures are reported, never swallowed.** A domain that failed to resolve is
-  not "available".
+- **Results cache for an hour.** A 50-domain re-check drops from 26.8s to 0.16s,
+  and from 3 requests to 0.
+- **Failures are never swallowed.** A domain that failed to resolve is reported
+  separately and excluded from `--available-only`.
 
-Reasoning, measurements and tuning knobs:
+Measurements, reasoning and tuning knobs:
 [`references/rate-limits.md`](references/rate-limits.md).
+
+</details>
 
 ## Documentation
 
 | File | Contents |
 |---|---|
-| [`SKILL.md`](SKILL.md) | Skill entry point — the workflow Claude follows |
+| [`SKILL.md`](SKILL.md) | Claude Code entry point |
+| [`AGENTS.md`](AGENTS.md) | Cross-tool entry point (Codex, Cursor, Copilot, …) |
 | [`references/environment.md`](references/environment.md) | Every variable, where each credential comes from |
 | [`references/providers.md`](references/providers.md) | Registrar API survey, verified behaviour, traps |
-| [`references/rate-limits.md`](references/rate-limits.md) | Limits, what the tooling does, how to tune |
+| [`references/rate-limits.md`](references/rate-limits.md) | Budgets, caching, how to tune |
 | [`references/query-recipes.md`](references/query-recipes.md) | Constraints → exact commands |
 | [`references/naming-guide.md`](references/naming-guide.md) | Word roots, affixes, combination patterns |
 
-## Scope
+## Scope and limits
 
-Read-only. This checks availability and prices; it does not buy, transfer, or
-change DNS. Purchases happen at your registrar under your own account.
+**Read-only.** This checks availability and prices. It does not buy, transfer,
+or change DNS. Purchases happen at your registrar, under your own account.
 
-Availability is a lookup, not a guarantee. Registry reservations, premium
-pricing, and trademark disputes are all outside what any API reports. Re-check
-with `--no-cache` immediately before buying.
+**Availability is a lookup, not a guarantee.** Registry reservations, premium
+pricing and trademark disputes are outside what any API reports. Re-check with
+`--no-cache` immediately before buying.
+
+**No opinions about your name.** No length rules, no price ceilings, no TLD
+ranking. `references/naming-guide.md` is a palette, not a whitelist.
 
 ## Contributing
 
@@ -198,7 +338,7 @@ Adding a provider is one function plus a dict entry — see
 matter more than the code:
 
 - Never map an ambiguous response to `available`. Use `unknown`.
-- Report what you could not resolve. Silence reads as "all clear".
+- Report what you couldn't resolve. Silence reads as "all clear".
 
 Corrections to the provider survey are especially welcome — registrar API
 policies change, and the eligibility rules in that table are the part most

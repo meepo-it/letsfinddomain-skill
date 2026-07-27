@@ -2,7 +2,9 @@
 
 [English](README.md) · **简体中文**
 
-一个 Claude Code skill，用来找到真正注册得下来的域名：批量生成候选、批量查可用性，并且在你掏钱之前同时告诉你**首年价和续费价**。
+找到真正注册得下来的域名。批量生成候选、批量查可用性，并且告诉你**续费价**——而不只是首年促销价。
+
+支持 Claude Code、Codex、Cursor、Copilot、Gemini CLI、Aider、Windsurf、Zed，也可以直接在终端里用。
 
 ```console
 $ python3 scripts/check-domains.py --tlds com,ai,io,dev,xyz zqxjkbwrm
@@ -16,22 +18,25 @@ $ python3 scripts/check-domains.py --tlds com,ai,io,dev,xyz zqxjkbwrm
 | zqxjkbwrm.xyz   | available | $2.04         | $12.98  | renewal 6.4x the first year |
 ```
 
-最后一列才是重点。`.xyz` 看起来是 2 美元的域名，实际上是 13 美元的域名。
+最后一列才是重点。`.xyz` 看起来是 2 美元的域名，其实是 13 美元的域名。
 
-## 为什么要有这个
+## 目录
 
-市面上的域名查询工具，通常至少踩中下面一条：
+- [快速开始](#快速开始)
+- [接入你的 AI 工具](#接入你的-ai-工具)
+- [常用操作](#常用操作)
+- [命令参数](#命令参数)
+- [数据来源](#数据来源)
+- [设计说明](#设计说明)
+- [文档](#文档)
+- [边界与限制](#边界与限制)
+- [参与贡献](#参与贡献)
 
-- **只给你看促销价。** `.xyz` 首年 $2.04、续费 $12.98，涨 6.4 倍。这里两列都显示，涨幅超过 1.5 倍会主动标出来。
-- **可用性会误报。** 基于 RDAP 的工具会告诉你 `github.io` 可以注册——因为 `.io` 根本没有 RDAP 服务器，而"没有服务器"和"没有注册记录"返回的都是 404，不先查就分不出来。这个工具会先查，分不出来时报 *unsupported*，而不是瞎猜。
-- **不管限速。** AI agent 一轮对话里会反复调脚本，还可能并行调。进程内 sleep 对跨进程的调用毫无保护作用。这里的请求预算是**带锁落盘**的。
-- **对你的名字有意见。** 这里没有长度规则、没有价格上限、没有后缀排序——那些是你自己的事。
+## 快速开始
 
-## 环境要求
+需要 Python 3.8+，零第三方依赖。
 
-Python 3.8+。零第三方依赖，只用标准库。
-
-## 安装
+**1. 克隆**
 
 ```bash
 git clone https://github.com/meepo-it/domain-finder-skill.git
@@ -39,52 +44,102 @@ cd domain-finder-skill
 cp .env.example .env
 ```
 
-在 `.env` 里填上 Spaceship 的 key 和 secret——免费账号即可，无最低余额要求，不需要 IP 白名单：
+**2. 配一个 key**
+
+去 [Spaceship](https://www.spaceship.com/) 注册（免费，无最低余额要求，不需要 IP 白名单），在 [API Manager](https://www.spaceship.com/application/api-manager/) 创建密钥，两个值都填进 `.env`：
 
 ```bash
 SPACESHIP_API_KEY=你的_key
 SPACESHIP_API_SECRET=你的_secret
 ```
 
-验证：
+**3. 验证**
 
 ```bash
-python3 scripts/check-domains.py example.com   # 应该显示 taken
+python3 scripts/check-domains.py example.com     # → taken
 ```
 
-暂时不想注册账号？设 `DOMAIN_FINDER_ALLOW_RDAP=1` 可以启用免密钥回退——但请先读[那个坑](references/providers.md#rdap-no-credentials)，它答不了 `.io` 和 `.co`。
+这样就能用了。
 
-其他方案和完整说明见 [`references/environment.md`](references/environment.md)。
+<details>
+<summary>不想注册任何账号？</summary>
 
-### 作为 Claude Code skill 使用
+在 `.env` 里设 `DOMAIN_FINDER_ALLOW_RDAP=1`，会启用一个直接查注册局数据的免密钥方案。
+
+它答不了 `.io` 和 `.co`（这两个注册局不提供 RDAP 服务器），而且一个域名一个请求、比较慢。适合先试用。[详细说明](references/providers.md#rdap-no-credentials)
+
+</details>
+
+其他 provider（NameSilo、Dynadot）和全部配置项见 [`references/environment.md`](references/environment.md)。
+
+## 接入你的 AI 工具
+
+先把仓库克隆到项目能访问到的位置，下面的示例都假设路径是 `tools/domain-finder-skill/`。
+
+### Claude Code
+
+软链到 skills 目录即可。它是按需加载的，不用到就不占上下文：
 
 ```bash
-ln -s "$(pwd)" ~/.claude/skills/domain-finder
+ln -s "$PWD/tools/domain-finder-skill" ~/.claude/skills/domain-finder
 ```
 
-之后直接让 Claude 帮你想域名，它会自动用上这个 skill。入口是 `SKILL.md`。
+之后直接让它帮你想域名就行。入口是 [`SKILL.md`](SKILL.md)。
 
-## 用法
+### Codex、Gemini CLI、Aider、Windsurf、Zed
+
+这几家读的是跨工具标准 [`AGENTS.md`](AGENTS.md)。把指引片段追加到你项目的 `AGENTS.md`：
 
 ```bash
-# 查指定域名
-python3 scripts/check-domains.py acme.com acme.io
+cat tools/domain-finder-skill/install/agents-snippet.md >> AGENTS.md
+```
 
-# 裸名 × 多个后缀
+追加完即可用，不需要再改。想全局生效而不是逐项目配置，就追加到 `~/.codex/AGENTS.md`。
+
+### Cursor
+
+直接复制现成的 rule 文件。它用的是 `alwaysApply: false` + description，Cursor 只在对话跟命名相关时才会拉进来，平时不占上下文：
+
+```bash
+mkdir -p .cursor/rules
+cp tools/domain-finder-skill/install/domain-finder.mdc .cursor/rules/
+```
+
+Cursor 现在也读 `AGENTS.md`，所以上面那个片段同样有效。用 rule 文件的好处是能更精细地控制触发时机。
+
+### GitHub Copilot
+
+```bash
+mkdir -p .github
+cat tools/domain-finder-skill/install/agents-snippet.md >> .github/copilot-instructions.md
+```
+
+### 其他工具
+
+脚本就是普通的命令行工具。把 [`AGENTS.md`](AGENTS.md) 指给你的 agent，需要的信息都在里面。
+
+## 常用操作
+
+**查指定域名**
+
+```bash
+python3 scripts/check-domains.py acme.com acme.io acme.dev
+```
+
+**裸名 × 多个后缀**
+
+```bash
 python3 scripts/check-domains.py --tlds com,ai,io snapkit vaultly forgehub
+```
 
-# 只看注册得下来的，且控制预算
+**只看注册得下来的，并控制预算**
+
+```bash
 python3 scripts/check-domains.py --tlds com snapkit vaultly \
   --available-only --max-price 20
-
-# 大批量之前先预估请求数和耗时
-python3 scripts/check-domains.py --plan --tlds com,ai,io,dev $(cat names.txt)
-
-# 机器可读输出
-python3 scripts/check-domains.py --json acme.com
 ```
 
-### 生成候选名
+**生成候选，再直接查**
 
 ```bash
 python3 scripts/gen-names.py --roots snap,clip,vault,pix --suffixes ify,ly,kit \
@@ -99,11 +154,27 @@ remock  reclip  reblur
 unmock  unclip  unblur
 ```
 
-支持的组合模式：`root+suffix`、`prefix+root`、`prefix+root+suffix`、`root+root`、`blend`（两个词根按共同字母融合，`design` + `ignite` → `designite`）。
+组合模式：`root+suffix` · `prefix+root` · `prefix+root+suffix` · `root+root` · `blend`（两个词根按共同字母融合，`design` + `ignite` → `designite`）。
 
-更多"约束 → 命令"的对照——只要 `.com`、不超过 6 个字符、要 `-ify` 结尾、单价低于 $20 等——见 [`references/query-recipes.md`](references/query-recipes.md)。
+**大批量之前先看成本**
 
-## 参数
+```bash
+python3 scripts/check-domains.py --plan --tlds com,ai,io,dev $(cat names.txt)
+```
+
+```console
+provider:        spaceship
+domains:         50 (0 cached, 50 to query)
+requests:        3
+budget:          25 requests / 30s
+estimated time:  1s
+```
+
+更多"约束 → 命令"对照（只要 `.com`、不超过 6 位、`-ify` 结尾、低于 $20 等）见 [`references/query-recipes.md`](references/query-recipes.md)。
+
+## 命令参数
+
+### `check-domains.py`
 
 | 参数 | 作用 |
 |---|---|
@@ -116,52 +187,110 @@ unmock  unclip  unblur
 | `--json` | JSON 输出 |
 | `--quiet` | 不打印进度信息 |
 
+状态列怎么读：
+
+| 值 | 含义 |
+|---|---|
+| `available` | 无注册记录，可以注册 |
+| `taken` | 已注册 |
+| `no RDAP for this TLD` | 免密钥方案答不了这个后缀。**这不等于"不可用"** |
+| `lookup failed` | 重试后仍失败。**未被确认可用** |
+| `unknown` | provider 返回了预期外的内容 |
+
 退出码：`0` 全部查明 · `1` 无有效输入 · `2` 未配置任何 provider · `3` 部分失败，这些域名**未被确认可用**。
+
+### `gen-names.py`
+
+| 参数 | 作用 |
+|---|---|
+| `--roots snap,clip` | 词根（必填） |
+| `--prefixes up,re` | 前缀 |
+| `--suffixes ify,ly` | 后缀 |
+| `--patterns root+suffix,blend` | 要生成哪些组合 |
+| `--min-len N` / `--max-len N` | 长度过滤 |
+| `--no-filter` | 跳过可读性过滤 |
 
 ## 数据来源
 
 | 用途 | 来源 | 凭据 |
 |---|---|---|
-| 可用性 | Spaceship（20 个域名/请求） | 免费账号 |
+| 可用性 | Spaceship，20 个域名/请求 | 免费账号 |
 | — 备选 | NameSilo | 免费账号 |
 | — 回退 | RDAP（走 `rdap.org`） | **不需要** |
 | 价格 | Porkbun 公开 TLD 价目表，907 个后缀 | **不需要** |
 | — 可选 | Dynadot，逐个域名的精确报价 | 免费账号 |
 
-数据源是可插拔的，而且价格开箱即用——因为 Porkbun 把整份价目表放在一个**完全不需要鉴权**的接口上。
+价格之所以能零配置开箱即用，是因为 Porkbun 把整份价目表放在一个**完全不需要鉴权**的接口上。
 
-一共调研了 11 家：各自要什么、实际返回什么、哪些有坑，都写在 [`references/providers.md`](references/providers.md)。
+一共调研了 11 家，能实测的都实测了——各自要什么、实际返回什么、哪些有坑：[`references/providers.md`](references/providers.md)。
 
-## 限速处理
+## 设计说明
 
-这是多数工具略过的部分。要点：
+这三件事是同类工具通常没做对的。
 
-- **预算落盘持久化**，所以上一次运行花掉的额度，对下一次运行仍然算数。
-- **用 `flock` 守护状态文件**，并行的多个 agent 会排队，而不是各自读到"已用 0 次"然后一起发请求。
-- **一个 429 会让所有进程一起停**，通过共享的冷却时间戳；遵循 `Retry-After`，否则指数退避 + 随机抖动。
-- **结果缓存 1 小时**，反复查重叠的候选集不花任何请求。实测 50 个域名的重复查询：26.8s → 0.16s，3 个请求 → 0 个。
-- **失败会如实上报，绝不吞掉。** 查询失败的域名不等于"可用"。
+<details>
+<summary><b>显示续费价，而不只是促销价</b></summary>
 
-设计理由、实测数据和调参开关见 [`references/rate-limits.md`](references/rate-limits.md)。
+`.xyz` 首年 $2.04、之后每年 $12.98，涨 6.4 倍；`.io` 差不多翻倍。只显示首年价是在误导人，所以两列一直都在，涨幅超过 1.5 倍会在 `Note` 列标出来。
+
+</details>
+
+<details>
+<summary><b>让免费查询工具说谎的那个 RDAP 陷阱</b></summary>
+
+基于 RDAP 的查询工具经常会报 `github.io` **可用**。原因是：
+
+| 域名 | 实际 | rdap.org 返回 |
+|---|---|---|
+| `openai.com` | 已注册 | 200 ✅ |
+| `vercel.app` | 已注册 | 200 ✅ |
+| **`github.io`** | **已注册** | **404 ← 会被读成"可用"** |
+| **`google.co`** | **已注册** | **404 ← 会被读成"可用"** |
+
+没有 RDAP 服务器的后缀返回的也是 404，跟"没有注册记录"完全一样。`.io` 和 `.co` 就都不提供。
+
+这个仓库会先拉 IANA bootstrap 名单（1200 个支持 RDAP 的后缀）缓存一周，不在名单里就报 `no RDAP for this TLD`，而不是瞎猜。
+
+</details>
+
+<details>
+<summary><b>进程退出后依然有效的限速</b></summary>
+
+AI agent 一轮里会反复调这个脚本——生成、查、调整、再查——有时还会并行跑好几个 agent。**每次调用都是独立进程**，所以进程内的 sleep 对彼此毫无保护作用。
+
+实际做法：
+
+- **请求预算落盘。** 上一次运行花掉的额度，对下一次运行仍然算数。
+- **`flock` 加锁守护状态**，并行进程排队，而不是各自读到"已用 0 次"然后一起发。
+- **一个 429 让所有进程一起停**，通过共享冷却时间戳；遵循 `Retry-After`，否则指数退避 + 随机抖动。
+- **结果缓存 1 小时。** 50 个域名的重复查询从 26.8s 降到 0.16s，请求数从 3 降到 0。
+- **失败绝不吞掉。** 查询失败的域名会单独列出，并被 `--available-only` 排除。
+
+实测数据、设计理由和调参开关见 [`references/rate-limits.md`](references/rate-limits.md)。
+
+</details>
 
 ## 文档
 
 | 文件 | 内容 |
 |---|---|
-| [`SKILL.md`](SKILL.md) | skill 入口，Claude 遵循的工作流 |
+| [`SKILL.md`](SKILL.md) | Claude Code 入口 |
+| [`AGENTS.md`](AGENTS.md) | 跨工具入口（Codex、Cursor、Copilot 等） |
 | [`references/environment.md`](references/environment.md) | 所有环境变量，每个凭据从哪来 |
 | [`references/providers.md`](references/providers.md) | 服务商 API 调研，实测行为与陷阱 |
-| [`references/rate-limits.md`](references/rate-limits.md) | 各家限速、工具的应对、如何调参 |
+| [`references/rate-limits.md`](references/rate-limits.md) | 各家限速、缓存、如何调参 |
 | [`references/query-recipes.md`](references/query-recipes.md) | 常见约束 → 具体命令 |
 | [`references/naming-guide.md`](references/naming-guide.md) | 词根、词缀、组合模式 |
 
 > 参考文档正文为英文，方便外部贡献者阅读和提 PR。
 
-## 边界
+## 边界与限制
 
-只读。这个工具只查可用性和价格，**不购买、不转移、不改 DNS**。购买请在你自己的注册商账号下完成。
+**只读。** 这个工具只查可用性和价格，不购买、不转移、不改 DNS。购买请在你自己的注册商账号下完成。
 
-另外，可用性是一次查询，不是承诺。注册局保留词、溢价定价、商标争议，这些任何 API 都不会告诉你。真正付款前，请用 `--no-cache` 再查一次。
+**可用性是一次查询，不是承诺。** 注册局保留词、溢价定价、商标争议，这些任何 API 都不会告诉你。真正付款前请用 `--no-cache` 再查一次。
+
+**对你的名字没有意见。** 没有长度规则、没有价格上限、没有后缀排序。`references/naming-guide.md` 是调色板，不是白名单。
 
 ## 参与贡献
 
