@@ -1,0 +1,22 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+*.key
+*.secret
+credentials.json
+
+# Personal notes that tend to accumulate secrets
+ENV.md
+NOTES.md
+
+# Caches produced by the scripts
+.cache/
+*.cache.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
