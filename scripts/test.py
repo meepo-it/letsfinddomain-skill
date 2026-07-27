@@ -119,6 +119,14 @@ class RepositoryTests(unittest.TestCase):
             "README section structure differs",
         )
 
+    def test_readme_update_instructions(self):
+        en, zh = read(ROOT / "README.md"), read(ROOT / "README.zh-CN.md")
+        update_command = "npx skills update letsfinddomain-skill"
+        self.assertIn(update_command, en)
+        self.assertIn(update_command, zh)
+        self.assertIn("does not silently update", en)
+        self.assertIn("不会静默自动更新", zh)
+
     def test_cross_platform_environment_guide(self):
         guide = read(ROOT / "references" / "environment.md")
         for heading in (

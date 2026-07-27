@@ -25,6 +25,18 @@ npx skills add https://github.com/meepo-it/letsfinddomain-skill \
   --skill letsfinddomain-skill --agent '*' --global --yes
 ```
 
+### Update
+
+When a new version is released, update the global installation with:
+
+```bash
+npx skills update letsfinddomain-skill --global --yes
+```
+
+The skill does not silently update itself while running. This keeps code and
+permission changes explicit and predictable. Reopen your AI session after an
+update if it has already loaded the previous version.
+
 ### 2. Open the skill
 
 In your AI tool, use:

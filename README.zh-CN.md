@@ -24,6 +24,16 @@ npx skills add https://github.com/meepo-it/letsfinddomain-skill \
   --skill letsfinddomain-skill --agent '*' --global --yes
 ```
 
+### 更新
+
+发布新版本后，手动执行：
+
+```bash
+npx skills update letsfinddomain-skill --global --yes
+```
+
+Skill 运行过程中不会静默自动更新。这样可以让代码和权限变化都经过用户明确确认。如果 AI 工具已经加载了旧版本，更新后重新打开会话即可。
+
 ### 2. 打开 skill
 
 在 AI 工具中输入：
