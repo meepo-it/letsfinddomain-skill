@@ -13,8 +13,8 @@ returns, and where the traps are.
 - 📄 **Documentation only** — not called; taken from official docs. Treat as
   a starting point, not gospel.
 
-Verified March 2026. Registrar API policies change; re-check before relying on
-an eligibility claim.
+Reviewed July 2026 against the official documentation linked below. Registrar
+API policies change; re-check before relying on an eligibility claim.
 
 ---
 
@@ -24,21 +24,25 @@ an eligibility claim.
 |---|---|---|---|---|
 | **Spaceship** | 20/req | premium only | none | ✅ |
 | **Porkbun** (pricing) | all TLDs | ✅ TLD list | **none — public** | ✅ |
-| **Porkbun** (availability) | 1/req | ✅ | free account | ✅ |
-| **NameSilo** | comma list | 📄 yes | free account | 🔶 |
+| **Porkbun** (availability) | 1/req | ✅ registration | free account | ✅ |
+| **NameSilo** | comma list via `/apibatch` | 📄 yes | free account | 🔶 |
 | **Dynadot** | **1/req** | ✅ per-domain, as prose | free account | ✅ |
 | **RDAP** | 1/req | ✗ | **none** | ✅ |
-| **Namecheap** | 50/req | ✗ | 20 domains or $50 | 📄 |
-| **Name.com** | multiple | 📄 yes | free account | 🔶 |
-| **Gandi** | 1/req | 📄 yes | free account | 🔶 |
-| **GoDaddy** | multiple | ✅ | see notes | 📄 |
+| **Namecheap** | 50/req | premium only | API access + IPv4 allowlist | ✅ |
+| **Name.com** | 50/req | ✅ registration + renewal | free account | ✅ |
+| **GoDaddy** | **50/req (client cap)** | ✅ registration; renewal via reference source | PAT | ✅ |
+| **Cloudflare Registrar** | 20/req | ✅ supported extensions | account + billing setup | ✅ |
+| **Gandi** | 1/req, async | unclear | free account | researched, not wired |
+| **IONOS** | — | — | — | no stable public check API found |
 | **Domainr** | 1/req | ✗ | free tier via RapidAPI | 🔶 |
 | **Hostinger MCP** | 1 name × N TLDs | ✗ | Hostinger account | 🔶 |
 
-**Implemented in this repo:** Spaceship, NameSilo, RDAP (availability);
-Porkbun, Dynadot (pricing). The rest are documented so you can add them — the
-provider interface is a single function, see
-[Adding a provider](#adding-a-provider).
+**Implemented in this repo:** Spaceship, NameSilo, GoDaddy, Name.com,
+Namecheap, Dynadot, Porkbun, Cloudflare Registrar, and optional RDAP for
+availability. Porkbun and Dynadot also remain available as pricing sources.
+Gandi, IONOS, Domainr, and Hostinger MCP are documented research leads but are
+not selected automatically because their current API shape or account model is
+less suitable for this read-only batch workflow.
 
 ---
 
@@ -84,7 +88,7 @@ Content-Type: application/json
 
 ## Porkbun
 
-*Implemented for pricing — and this is the quiet winner of the whole survey.*
+*Implemented for availability and pricing.*
 
 ### Pricing — public, no credentials
 
@@ -119,9 +123,10 @@ or two. They are a reference, not a quote.
 POST https://api.porkbun.com/api/json/v3/domain/checkDomain/{domain}
 ```
 
-Returns `{"status":"ERROR","code":"API_KEY_REQUIRED"}` without credentials.
-One domain per request, so it is a poor fit for bulk checking — which is why
-this repo uses Porkbun for prices and Spaceship for availability.
+One domain per request. Set `PORKBUN_API_KEY` and `PORKBUN_SECRET_API_KEY` from
+[Account → API Access](https://porkbun.com/account/api). It returns a current
+registration price; renewal is filled from the selected reference source when
+the endpoint does not provide one.
 
 ---
 
@@ -130,11 +135,16 @@ this repo uses Porkbun for prices and Spaceship for availability.
 *Implemented as the alternative availability provider.*
 
 ```
-GET https://www.namesilo.com/api/checkRegisterAvailability
+GET https://www.namesilo.com/apibatch/checkRegisterAvailability
       ?version=1&type=json&key=<key>&domains=example.com,example.net
 ```
 
 - **Batch:** comma-separated list
+- **Automated traffic:** NameSilo requires batch use to go through `/apibatch`;
+  using the standard `/api` URI for repetitive traffic can trigger limiting or
+  suspension. See the [official batch policy](https://www.namesilo.com/support/v2/articles/account-options/api-automated-batch).
+- **Rate:** no fixed public number; this skill uses one in-flight request and a
+  conservative 20 requests/60 seconds budget.
 - **Barrier:** free account, single API key, no IP allowlist
 - **Key:** <https://www.namesilo.com/account/api-manager>
 - **Response:** `reply.code` `300` means success; results split into
@@ -151,7 +161,7 @@ rather than guessing.
 
 ## Dynadot
 
-*Implemented as the optional exact-pricing source.*
+*Implemented for availability and as the optional exact-pricing source.*
 
 ```
 GET https://api.dynadot.com/api3.json
@@ -167,9 +177,10 @@ GET https://api.dynadot.com/api3.json
 
 ### Gotchas
 
-- **One domain per request.** Passing `domain0` and `domain1` returns
-  `too many domains entered, please search one domain per command`. Verified.
-  This makes it unusable for bulk availability.
+- **Account tier matters.** Dynadot documents Regular (1 thread, 60/min), Bulk
+  (5 threads, 600/min), Super Bulk (35 threads, 6000/min), and Premium Bulk
+  (25 threads, 6000/min). The checker defaults to the Regular-safe one-thread,
+  one-second path rather than assuming a higher tier.
 - **The price is an English sentence**, not structured fields. You have to
   regex the numbers out of it.
 - `ResponseCode` is `0` for success and `-1` for failure — note that `0` is
@@ -177,6 +188,10 @@ GET https://api.dynadot.com/api3.json
 
 Its redeeming feature is exact per-domain quotes including premium pricing,
 which the TLD price list cannot give you.
+
+For availability, the script sends one `domain0` per request so the result and
+price mapping stays deterministic across account tiers. Higher-tier users can
+raise the client budget explicitly after reviewing the official limits.
 
 ---
 
@@ -224,6 +239,8 @@ Also note: RDAP answers "is there a registration record", which is not exactly
 
 ## Namecheap
 
+*Implemented — useful when the account already has API access enabled.*
+
 ```
 GET https://api.namecheap.com/xml.response
       ?ApiUser=..&ApiKey=..&UserName=..&ClientIp=..
@@ -231,63 +248,59 @@ GET https://api.namecheap.com/xml.response
 ```
 
 - **Batch:** up to 50 domains per call
-- **Rate limit:** 700 calls/minute
 - **Response:** XML, not JSON
-- **Barrier — the highest in this survey:** the account needs **20+ domains**,
-  **or $50 balance**, **or $50 spent in the last 2 years**. On top of that you
-  must **allowlist your IP**, which makes it awkward from a laptop with a
-  changing address, and from CI.
+- **Setup:** Profile → Tools → Business & Dev Tools → Manage Namecheap API
+  Access, enable API access, and allowlist the machine's IPv4 address.
+- **Prices:** premium registration and renewal prices are returned; ordinary
+  domains do not include a direct quote, so the selected reference source is
+  used for those.
 
-Good throughput if you already qualify. Not a sensible default for a tool
-strangers are supposed to be able to install.
+The IP allowlist makes this a poor default for laptops with changing public IPs.
 
 ---
 
 ## GoDaddy
 
-```
-GET https://api.godaddy.com/v1/domains/available?domain=example.com
-Authorization: sso-key <key>:<secret>
+*Implemented — bulk availability and first-year quotes.*
+
+```text
+POST https://api.godaddy.com/v1/domains/available
+Authorization: Bearer <personal-access-token>
+["example.com", "example.net"]
 ```
 
-Also has `POST /v1/domains/available` for bulk, and returns price directly
-(in micros — divide by 1,000,000).
-
-**Eligibility is genuinely unclear right now.** Sources conflict on whether
-availability checks need 50+ domains in the account, a ~$20/month average
-spend, or just one active domain, and the policy changed at least twice in
-2025–2026. If you depend on GoDaddy, check the
-[current policy](https://www.godaddy.com/help/how-do-i-access-domain-related-apis-42424)
-yourself rather than trusting this table. I could not verify it without an
-account.
+Create a Personal Access Token in the [GoDaddy Developer Portal](https://developer.godaddy.com/en/docs/api-users/auth/how-to)
+and give it the `domains.domain:read` scope. The v1 bulk response includes
+`available`, `domain`, and the first-year `price`. The checker caps batches at
+50 names and uses the TLD price source for renewal reference data. GoDaddy's
+rate-limit headers are treated as authoritative because their published window
+values can change.
 
 ---
 
 ## Name.com
 
+*Implemented — direct registration and renewal quotes.*
+
 ```
-POST https://api.name.com/v4/domains:checkAvailability
-{"domainNames": ["example.com"]}
+POST https://api.name.com/core/v1/domains:checkAvailability
+{"domainNames": ["example.com"], "purchaseType": "registration"}
 ```
 
-Basic-auth with username + API token. Confirmed live that the endpoint exists
-and returns `{"message":"Unauthenticated"}` without credentials. Accepts
-multiple domain names per call and documents a `purchasePrice` /
-`renewalPrice` in the response. Free account; a sandbox environment is
-available at `api.dev.name.com`.
+Basic-auth with username + API token. The documented maximum is 50 names per
+request. Results include `purchasable`, `premium`, `purchasePrice`, and
+`renewalPrice`. Create the token in [Account Settings → API Tokens](https://www.name.com/account/settings/api).
 
 ---
 
 ## Gandi
 
-```
-GET https://api.gandi.net/v5/domain/check?name=example.com
-Authorization: Bearer <token>
-```
-
-Confirmed live that the endpoint exists and requires auth
-(`You must provide an access token or an API Key`). One domain per call,
-returns pricing in the response. Strong European TLD coverage.
+Gandi has a documented `domain.available()` XML-RPC method, but it is
+asynchronous: callers must start a check and poll its task result. I did not
+find a current, stable REST endpoint that combines availability with a direct
+renewal quote, so it is intentionally not wired into this standard-library
+script. See the [Gandi RPC domain usage documentation](https://doc.rpc.gandi.net/domain/usage.html)
+if Gandi is your registrar.
 
 ---
 
@@ -330,11 +343,39 @@ ceiling makes it unsuitable for large sweeps.
 
 ---
 
-## Not viable
+## Cloudflare Registrar
 
-- **Cloudflare Registrar** — at-cost pricing, but registration is limited to
-  domains already using Cloudflare DNS and there is no public availability-check
-  API. Great place to *transfer* to, not a place to *search*.
+*Implemented, but not the best default for a general naming sweep.*
+
+```http
+POST https://api.cloudflare.com/client/v4/accounts/{account_id}/registrar/domain-check
+Authorization: Bearer <api-token>
+{"domains": ["example.com"]}
+```
+
+- **Batch:** up to 20 domains per request
+- **Response:** `registrable`, reason, registration cost, renewal cost, and
+  tier for supported extensions
+- **Setup:** Cloudflare account ID, Registrar-scoped API token, billing profile,
+  default payment method, registrant contact, and registration agreement
+- **Limit:** Cloudflare's Registrar API is beta and only exposes extensions it
+  can register; premium registration is not supported through this API
+
+For unsupported extensions the script reports `not supported by this provider`,
+never `available`.
+
+---
+
+## Not wired: other researched platforms
+
+- **Gandi** — official availability exists as an asynchronous XML-RPC method;
+  no simple stable REST + renewal-price path was verified for this script.
+- **IONOS** — no stable public availability API path was verified in the
+  official material reviewed.
+- **Domainr** — useful status taxonomy through RapidAPI, but no registrar price
+  and a separate API account; not ideal for a purchase-oriented answer.
+- **Hostinger** — official MCP availability tool, not a standard REST provider;
+  its 10 requests/minute limit is tight for large sweeps.
 - **Google Domains** — shut down; the business was sold to Squarespace in 2023.
 - **Scraping registrar search pages** — brittle, usually against the terms of
   service, and unnecessary given how many free APIs exist.

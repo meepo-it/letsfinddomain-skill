@@ -2,8 +2,9 @@
 """Check domain availability and attach reference pricing.
 
 Availability comes from whichever provider is configured (Spaceship, NameSilo,
-or the keyless RDAP fallback). Pricing comes from Porkbun's public TLD price
-list, which needs no credentials.
+GoDaddy, Name.com, Namecheap, Dynadot, Porkbun, Cloudflare Registrar, or the
+keyless RDAP fallback). Pricing defaults to Porkbun's public TLD price list,
+with optional Dynadot per-domain quotes or no pricing.
 
 Rate limiting is persisted to disk, so the budget is respected across separate
 invocations of this script and across parallel agents. See
@@ -21,6 +22,7 @@ Run with --help for the full option list.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import random
@@ -28,7 +30,9 @@ import re
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 try:
@@ -40,13 +44,25 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 CACHE_DIR = REPO_ROOT / ".cache"
 
 PORKBUN_PRICING_URL = "https://api.porkbun.com/api/json/v3/pricing/get"
+PORKBUN_AVAILABILITY_URL = "https://api.porkbun.com/api/json/v3/domain/checkDomain/{domain}"
+DYNADOT_PRICING_URL = "https://api.dynadot.com/api3.json"
+GODADDY_AVAILABILITY_URL = "https://api.godaddy.com/v3/domains/check-availability"
+GODADDY_BATCH_AVAILABILITY_URL = "https://api.godaddy.com/v1/domains/available"
+NAMECOM_AVAILABILITY_URL = "https://api.name.com/core/v1/domains:checkAvailability"
+NAMECHEAP_API_URL = "https://api.namecheap.com/xml.response"
+CLOUDFLARE_AVAILABILITY_URL = "https://api.cloudflare.com/client/v4/accounts/{account_id}/registrar/domain-check"
 SPACESHIP_AVAILABILITY_URL = "https://spaceship.dev/api/v1/domains/available"
-NAMESILO_AVAILABILITY_URL = "https://www.namesilo.com/api/checkRegisterAvailability"
+# NameSilo explicitly requires automated/repetitive traffic to use /apibatch.
+NAMESILO_AVAILABILITY_URL = "https://www.namesilo.com/apibatch/checkRegisterAvailability"
 IANA_RDAP_BOOTSTRAP_URL = "https://data.iana.org/rdap/dns.json"
 RDAP_QUERY_URL = "https://rdap.org/domain/{domain}"
 
-SPACESHIP_BATCH_SIZE = 20   # hard API limit
-NAMESILO_BATCH_SIZE = 20    # self-imposed, keeps the GET URL short
+SPACESHIP_BATCH_SIZE = 20   # documented maximum
+NAMESILO_BATCH_SIZE = 20    # client limit; batch traffic uses /apibatch
+GODADDY_BATCH_SIZE = 50      # client limit; API accepts an array, no public max
+NAMECOM_BATCH_SIZE = 50      # documented maximum
+NAMECHEAP_BATCH_SIZE = 50    # client limit; documented DomainList is batched
+CLOUDFLARE_BATCH_SIZE = 20   # documented maximum
 
 DEFAULT_PRICE_TTL = 86400   # 1 day
 DEFAULT_RESULT_TTL = 3600   # 1 hour
@@ -64,7 +80,19 @@ DOMAIN_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9-]+)+$")
 RATE_LIMITS = {
     "spaceship": (25, 30.0, 0.2),
     "namesilo": (20, 60.0, 0.5),
+    # GoDaddy's current docs describe 600 requests per roughly 23-minute
+    # credential window. Keep headroom for other tools sharing the PAT.
+    "godaddy": (540, 1380.0, 1.0),
+    "namecom": (20, 60.0, 0.5),
+    "namecheap": (45, 60.0, 1.0),
     "rdap": (60, 60.0, 1.0),
+    # Dynadot Regular accounts are explicitly limited to one thread and one
+    # request per second. Higher account tiers can override these values.
+    "dynadot": (55, 60.0, 1.0),
+    "porkbun": (60, 60.0, 0.5),
+    # Cloudflare's global token budget is 1200/5m; this lower local budget
+    # leaves room for unrelated Cloudflare API calls using the same token.
+    "cloudflare": (180, 60.0, 0.35),
 }
 
 
@@ -162,6 +190,37 @@ class JsonState:
                     fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
+class InFlightGate:
+    """Cross-process gate for providers whose API uses a thread/concurrency cap.
+
+    The checker itself is sequential, but multiple slash invocations or agents
+    can run at once. A separate lock held only while the HTTP request is in
+    flight prevents those processes from accidentally turning a serial API
+    into concurrent traffic.
+    """
+
+    def __init__(self, provider: str):
+        self.path = CACHE_DIR / f"inflight-{provider}.lock"
+        self.handle = None
+
+    def acquire(self) -> None:
+        if not fcntl:
+            return
+        CACHE_DIR.mkdir(exist_ok=True)
+        self.handle = open(self.path, "a", encoding="utf-8")
+        fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX)
+
+    def release(self) -> None:
+        if not self.handle:
+            return
+        try:
+            if fcntl:
+                fcntl.flock(self.handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            self.handle.close()
+            self.handle = None
+
+
 class RateLimiter:
     """Sliding-window limiter whose state survives process exit.
 
@@ -180,6 +239,7 @@ class RateLimiter:
         self.min_interval = min_interval
         self.quiet = quiet
         self.state = JsonState(CACHE_DIR / f"ratelimit-{provider}.json")
+        self.gate = InFlightGate(provider)
         self.waited = 0.0
 
     def _prune(self, data: dict) -> list:
@@ -218,6 +278,25 @@ class RateLimiter:
                       file=sys.stderr)
             self.waited += delay
             time.sleep(min(delay, 60))
+
+    def start_request(self) -> None:
+        """Acquire the provider's cross-process in-flight slot."""
+        self.gate.acquire()
+
+    def finish_request(self) -> None:
+        self.gate.release()
+
+    def observe_headers(self, headers) -> None:
+        """Honor a server-provided reset when it says the budget is exhausted."""
+        if not headers:
+            return
+        try:
+            remaining = float(headers.get("RateLimit-Remaining", ""))
+            reset = float(headers.get("RateLimit-Reset", ""))
+        except (TypeError, ValueError):
+            return
+        if remaining <= 0 and reset > 0:
+            self.penalise(reset)
 
     def penalise(self, retry_after: float) -> None:
         """The provider said 429. Park every worker until the cooldown expires."""
@@ -294,26 +373,29 @@ class ResultCache:
 # --------------------------------------------------------------------------
 
 def _retry_after(headers, fallback: float) -> float:
-    raw = headers.get("Retry-After") if headers else None
-    if raw:
-        try:
-            return max(1.0, float(raw))
-        except ValueError:
-            pass
+    if headers:
+        for name in ("Retry-After", "RateLimit-Reset"):
+            raw = headers.get(name)
+            if raw:
+                try:
+                    return max(1.0, float(raw))
+                except ValueError:
+                    pass
     return fallback
 
 
 def request_json(url, *, method="GET", headers=None, payload=None,
-                 limiter=None, timeout=30, quiet=False):
+                 limiter=None, timeout=30, quiet=False, response_format="json"):
     """One rate-limited HTTP call with backoff. Returns (status, body, headers)."""
     data = json.dumps(payload).encode("utf-8") if payload is not None else None
 
     for attempt in range(MAX_RETRIES):
         if limiter:
             limiter.acquire()
+            limiter.start_request()
 
         req = urllib.request.Request(url, data=data, method=method)
-        req.add_header("User-Agent", "domain-finder-skill/1.0")
+        req.add_header("User-Agent", "letsfinddomain-skill/1.0")
         req.add_header("Accept", "application/json")
         if data is not None:
             req.add_header("Content-Type", "application/json")
@@ -323,6 +405,10 @@ def request_json(url, *, method="GET", headers=None, payload=None,
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 body = resp.read().decode("utf-8", "replace")
+                if limiter:
+                    limiter.observe_headers(resp.headers)
+                if response_format == "text":
+                    return resp.status, body, resp.headers
                 try:
                     return resp.status, json.loads(body), resp.headers
                 except json.JSONDecodeError:
@@ -343,6 +429,8 @@ def request_json(url, *, method="GET", headers=None, payload=None,
                     time.sleep(delay)
                     continue
             body = exc.read().decode("utf-8", "replace")
+            if response_format == "text":
+                return exc.code, body, exc.headers
             try:
                 return exc.code, json.loads(body), exc.headers
             except json.JSONDecodeError:
@@ -357,8 +445,12 @@ def request_json(url, *, method="GET", headers=None, payload=None,
                 time.sleep(delay)
                 continue
             if not quiet:
-                print(f"  ! network error for {url}: {exc}", file=sys.stderr)
+                safe_url = urllib.parse.urlsplit(url)._replace(query="").geturl()
+                print(f"  ! network error for {safe_url}: {exc}", file=sys.stderr)
             return 0, None, None
+        finally:
+            if limiter:
+                limiter.finish_request()
 
     return 0, None, None
 
@@ -368,11 +460,14 @@ def request_status(url, *, limiter=None, timeout=20, quiet=False) -> int:
     for attempt in range(MAX_RETRIES):
         if limiter:
             limiter.acquire()
+            limiter.start_request()
         req = urllib.request.Request(url, method="GET")
-        req.add_header("User-Agent", "domain-finder-skill/1.0")
+        req.add_header("User-Agent", "letsfinddomain-skill/1.0")
         req.add_header("Accept", "application/rdap+json")
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
+                if limiter:
+                    limiter.observe_headers(resp.headers)
                 return resp.status
         except urllib.error.HTTPError as exc:
             if exc.code == 429 or 500 <= exc.code < 600:
@@ -389,14 +484,17 @@ def request_status(url, *, limiter=None, timeout=20, quiet=False) -> int:
                 time.sleep(min(30.0, (2 ** attempt) * 2))
                 continue
             return 0
+        finally:
+            if limiter:
+                limiter.finish_request()
     return 0
 
 
 # --------------------------------------------------------------------------
-# pricing (Porkbun public endpoint — no credentials, no rate limiter needed)
+# pricing
 # --------------------------------------------------------------------------
 
-def load_tld_prices(ttl: int, quiet: bool = False) -> dict:
+def load_tld_prices(ttl: int, quiet: bool = False, limiter=None) -> dict:
     cache_file = CACHE_DIR / "porkbun-pricing.json"
     if cache_file.is_file() and (time.time() - cache_file.stat().st_mtime) < ttl:
         try:
@@ -405,7 +503,7 @@ def load_tld_prices(ttl: int, quiet: bool = False) -> dict:
             pass
 
     status, body, _ = request_json(PORKBUN_PRICING_URL, method="POST",
-                                   payload={}, quiet=quiet)
+                                   payload={}, limiter=limiter, quiet=quiet)
     if status != 200 or not body or body.get("status") != "SUCCESS":
         if cache_file.is_file():
             if not quiet:
@@ -424,6 +522,83 @@ def load_tld_prices(ttl: int, quiet: bool = False) -> dict:
     CACHE_DIR.mkdir(exist_ok=True)
     cache_file.write_text(json.dumps(pricing), encoding="utf-8")
     return pricing
+
+
+def parse_dynadot_price(value: str) -> dict:
+    """Parse Dynadot's current and legacy English price sentences."""
+    if not isinstance(value, str):
+        return {}
+    registration = re.search(r"Registration Price:\s*([0-9]+(?:\.[0-9]+)?)", value,
+                             re.IGNORECASE)
+    renewal = re.search(r"Renewal price:\s*([0-9]+(?:\.[0-9]+)?)", value,
+                        re.IGNORECASE)
+    if registration:
+        registration_value = float(registration.group(1))
+    else:
+        current = re.findall(r"([0-9]+(?:\.[0-9]+)?)\s+in\s+USD", value,
+                             re.IGNORECASE)
+        if not current:
+            return {}
+        registration_value = float(current[0])
+    renewal_value = float(renewal.group(1)) if renewal else registration_value
+    if not renewal:
+        current = re.findall(r"([0-9]+(?:\.[0-9]+)?)\s+in\s+USD", value,
+                             re.IGNORECASE)
+        if len(current) > 1:
+            renewal_value = float(current[1])
+    lowered = value.lower()
+    premium = "premium" in lowered and not re.search(
+        r"not\s+(?:a\s+)?premium(?:\s+domain)?", lowered)
+    return {
+        "registration": registration_value,
+        "renewal": renewal_value,
+        "premium": premium,
+    }
+
+
+def load_dynadot_prices(domains, ttl: int, quiet: bool = False) -> dict:
+    """Fetch exact per-domain quotes from Dynadot, with a small disk cache."""
+    key = env("DYNADOT_API_KEY")
+    if not key:
+        if not quiet:
+            print("  ! DYNADOT_API_KEY is required for Dynadot pricing; continuing without prices",
+                  file=sys.stderr)
+        return {}
+
+    cache_file = CACHE_DIR / "dynadot-pricing.json"
+    cached = {}
+    if cache_file.is_file() and (time.time() - cache_file.stat().st_mtime) < ttl:
+        try:
+            cached = json.loads(cache_file.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            cached = {}
+
+    limiter = RateLimiter("dynadot", quiet)
+    prices = {domain: cached[domain] for domain in domains if domain in cached}
+    for domain in domains:
+        if domain in prices:
+            continue
+        query = urllib.parse.urlencode({
+            "key": key,
+            "command": "search",
+            "domain0": domain,
+            "show_price": "1",
+            "currency": "USD",
+        })
+        status, body, _ = request_json(
+            f"{DYNADOT_PRICING_URL}?{query}", limiter=limiter, quiet=quiet)
+        results = ((body or {}).get("SearchResponse") or {}).get("SearchResults") or []
+        if status != 200 or not results:
+            continue
+        result = results[0]
+        price = parse_dynadot_price(result.get("Price", ""))
+        if price:
+            prices[domain] = price
+
+    if prices:
+        CACHE_DIR.mkdir(exist_ok=True)
+        cache_file.write_text(json.dumps(prices), encoding="utf-8")
+    return prices
 
 
 def price_for(domain: str, pricing: dict) -> dict:
@@ -498,7 +673,14 @@ def check_namesilo(domains, limiter, quiet):
             entry = reply.get(bucket)
             if not entry:
                 continue
-            names = entry.get("domain", entry)
+            # NameSilo returns a mapping for one result but a list of mappings
+            # for multiple results. Normalize both shapes before iterating.
+            if isinstance(entry, list):
+                names = entry
+            elif isinstance(entry, dict):
+                names = entry.get("domain", entry)
+            else:
+                names = entry
             if isinstance(names, (str, dict)):
                 names = [names]
             for name in names:
@@ -507,6 +689,265 @@ def check_namesilo(domains, limiter, quiet):
                 if name:
                     results[name] = {"status": label}
 
+        for domain in batch:
+            results.setdefault(domain, {"status": "unknown"})
+    return results
+
+
+def _direct_price(registration, renewal=None) -> dict:
+    reg = _to_float(registration)
+    ren = _to_float(renewal)
+    if reg is None and ren is None:
+        return {}
+    return {
+        "registration": reg,
+        "renewal": ren,
+    }
+
+
+def _godaddy_price(body: dict) -> dict:
+    """Convert GoDaddy's smallest-currency-unit quote to USD."""
+    prices = body.get("prices") or []
+    if not prices:
+        return {}
+    price = next((item for item in prices if item.get("period") == 1), prices[0])
+    registration = price.get("price") or {}
+    renewal = price.get("renewalPrice") or {}
+    if registration.get("currencyCode") not in (None, "USD"):
+        return {}
+    return _direct_price(
+        _to_float(registration.get("value")) / 100
+        if _to_float(registration.get("value")) is not None else None,
+        _to_float(renewal.get("value")) / 100
+        if _to_float(renewal.get("value")) is not None else None,
+    )
+
+
+def _godaddy_batch_price(item: dict) -> dict:
+    """Convert the v1 bulk availability quote to the shared price shape."""
+    value = _to_float(item.get("price"))
+    if value is None:
+        return {}
+    # GoDaddy REST prices are expressed in currency micro-units.
+    return _direct_price(value / 1_000_000)
+
+
+def check_godaddy(domains, limiter, quiet):
+    token = env("GODADDY_PAT")
+    headers = {"Authorization": f"Bearer {token}",
+               "Accept": "application/json"}
+    results = {}
+    for i in range(0, len(domains), GODADDY_BATCH_SIZE):
+        batch = domains[i:i + GODADDY_BATCH_SIZE]
+        status, body, _ = request_json(
+            GODADDY_BATCH_AVAILABILITY_URL, method="POST", headers=headers,
+            payload=batch, limiter=limiter, quiet=quiet)
+        if status != 200 or not body:
+            if not quiet:
+                print(f"  ! GoDaddy error: HTTP {status}", file=sys.stderr)
+            for domain in batch:
+                results[domain] = {"status": "error"}
+            continue
+        found = set()
+        for item in body.get("domains", []):
+            domain = str(item.get("domain", "")).lower()
+            if not domain:
+                continue
+            found.add(domain)
+            entry = {"status": "available" if item.get("available") is True else "taken"}
+            if entry["status"] == "available":
+                entry["price"] = _godaddy_batch_price(item)
+            results[domain] = entry
+        for item in body.get("errors", []):
+            domain = str(item.get("domain", "")).lower()
+            if domain:
+                found.add(domain)
+                results[domain] = {"status": "error"}
+        for domain in batch:
+            results.setdefault(domain, {"status": "unknown"})
+    return results
+
+
+def check_namecom(domains, limiter, quiet):
+    username, token = env("NAMECOM_USERNAME"), env("NAMECOM_API_TOKEN")
+    encoded = base64.b64encode(f"{username}:{token}".encode()).decode()
+    headers = {"Authorization": f"Basic {encoded}"}
+    results = {}
+    for i in range(0, len(domains), NAMECOM_BATCH_SIZE):
+        batch = domains[i:i + NAMECOM_BATCH_SIZE]
+        status, body, _ = request_json(
+            NAMECOM_AVAILABILITY_URL, method="POST", headers=headers,
+            payload={"domainNames": batch, "purchaseType": "registration"},
+            limiter=limiter, quiet=quiet)
+        if status != 200 or not body:
+            if not quiet:
+                print(f"  ! Name.com error: HTTP {status}", file=sys.stderr)
+            for domain in batch:
+                results[domain] = {"status": "error"}
+            continue
+        for item in body.get("results", []):
+            domain = item.get("domainName", "").lower()
+            if not domain:
+                continue
+            purchasable = item.get("purchasable")
+            entry = {"status": "available" if purchasable is True else "taken",
+                     "premium": bool(item.get("premium"))}
+            if entry["status"] == "available":
+                entry["price"] = _direct_price(
+                    item.get("purchasePrice"), item.get("renewalPrice"))
+            results[domain] = entry
+        for domain in batch:
+            results.setdefault(domain, {"status": "unknown"})
+    return results
+
+
+def check_namecheap(domains, limiter, quiet):
+    api_user = env("NAMECHEAP_API_USER", env("NAMECHEAP_USERNAME"))
+    username = env("NAMECHEAP_USERNAME", api_user)
+    key = env("NAMECHEAP_API_KEY")
+    client_ip = env("NAMECHEAP_CLIENT_IP")
+    results = {}
+    for i in range(0, len(domains), NAMECHEAP_BATCH_SIZE):
+        batch = domains[i:i + NAMECHEAP_BATCH_SIZE]
+        params = {
+            "ApiUser": api_user,
+            "ApiKey": key,
+            "UserName": username,
+            "ClientIp": client_ip,
+            "Command": "namecheap.domains.check",
+            "DomainList": ",".join(batch),
+        }
+        query = urllib.parse.urlencode(params)
+        status, body, _ = request_json(
+            f"{NAMECHEAP_API_URL}?{query}", limiter=limiter, quiet=quiet,
+            response_format="text")
+        if status != 200 or not body:
+            if not quiet:
+                print(f"  ! Namecheap error: HTTP {status}", file=sys.stderr)
+            for domain in batch:
+                results[domain] = {"status": "error"}
+            continue
+        try:
+            root = ET.fromstring(body)
+            if root.attrib.get("Status", "").upper() != "OK":
+                raise ValueError("API response status was not OK")
+            found = set()
+            for element in root.iter():
+                if not element.tag.endswith("DomainCheckResult"):
+                    continue
+                domain = element.attrib.get("Domain", "").lower()
+                if not domain:
+                    continue
+                found.add(domain)
+                available = element.attrib.get("Available", "false").lower() == "true"
+                entry = {
+                    "status": "available" if available else "taken",
+                    "premium": element.attrib.get("IsPremiumName", "false").lower() == "true",
+                }
+                if available and entry["premium"]:
+                    entry["price"] = _direct_price(
+                        element.attrib.get("PremiumRegistrationPrice"),
+                        element.attrib.get("PremiumRenewalPrice"))
+                results[domain] = entry
+            for domain in batch:
+                if domain not in found:
+                    results[domain] = {"status": "unknown"}
+        except (ET.ParseError, ValueError) as exc:
+            if not quiet:
+                print(f"  ! Namecheap response error: {exc}", file=sys.stderr)
+            for domain in batch:
+                results[domain] = {"status": "error"}
+    return results
+
+
+def check_dynadot(domains, limiter, quiet):
+    key = env("DYNADOT_API_KEY")
+    results = {}
+    for domain in domains:
+        query = urllib.parse.urlencode({
+            "key": key,
+            "command": "search",
+            "domain0": domain,
+            "show_price": "1",
+            "currency": "USD",
+        })
+        status, body, _ = request_json(
+            f"{DYNADOT_PRICING_URL}?{query}", limiter=limiter, quiet=quiet)
+        response = (body or {}).get("SearchResponse") or {}
+        search_results = response.get("SearchResults") or []
+        if status != 200 or not search_results:
+            results[domain] = {"status": "error"}
+            continue
+        item = next((row for row in search_results
+                     if row.get("DomainName", "").lower() == domain), search_results[0])
+        available = str(item.get("Available", "")).lower() in ("yes", "true", "1")
+        entry = {"status": "available" if available else "taken"}
+        if available:
+            entry["price"] = parse_dynadot_price(item.get("Price", ""))
+            entry["premium"] = bool(entry["price"].pop("premium", False))
+        results[domain] = entry
+    return results
+
+
+def check_porkbun(domains, limiter, quiet):
+    key, secret = env("PORKBUN_API_KEY"), env("PORKBUN_SECRET_API_KEY")
+    results = {}
+    for domain in domains:
+        status, body, _ = request_json(
+            PORKBUN_AVAILABILITY_URL.format(domain=urllib.parse.quote(domain)),
+            method="POST", payload={"apikey": key, "secretapikey": secret},
+            limiter=limiter, quiet=quiet)
+        if status != 200 or not body or body.get("status") != "SUCCESS":
+            results[domain] = {"status": "error"}
+            continue
+        available = str(body.get("avail", "")).lower() == "yes"
+        results[domain] = {
+            "status": "available" if available else "taken",
+            "price": _direct_price(body.get("price")) if available else {},
+        }
+    return results
+
+
+def check_cloudflare(domains, limiter, quiet):
+    account_id, token = env("CLOUDFLARE_ACCOUNT_ID"), env("CLOUDFLARE_API_TOKEN")
+    url = CLOUDFLARE_AVAILABILITY_URL.format(account_id=account_id)
+    headers = {"Authorization": f"Bearer {token}"}
+    results = {}
+    for i in range(0, len(domains), CLOUDFLARE_BATCH_SIZE):
+        batch = domains[i:i + CLOUDFLARE_BATCH_SIZE]
+        status, body, _ = request_json(
+            url, method="POST", headers=headers, payload={"domains": batch},
+            limiter=limiter, quiet=quiet)
+        if status != 200 or not body:
+            if not quiet:
+                print(f"  ! Cloudflare Registrar error: HTTP {status}", file=sys.stderr)
+            for domain in batch:
+                results[domain] = {"status": "error"}
+            continue
+        items = ((body.get("result") or {}).get("domains") or [])
+        for item in items:
+            # Cloudflare's Registrar API currently calls this field `name`;
+            # accept the older/documented `domain` spelling as well.
+            domain = str(item.get("domain", item.get("name", ""))).lower()
+            if not domain:
+                continue
+            if item.get("registrable") is True:
+                pricing = item.get("pricing") or {}
+                results[domain] = {
+                    "status": "available",
+                    "premium": str(item.get("tier", "")).lower() == "premium",
+                    "price": _direct_price(pricing.get("registration_cost"),
+                                            pricing.get("renewal_cost")),
+                }
+            elif item.get("reason") in {
+                "extension_not_supported_via_api",
+                "extension_not_supported",
+                "extension_disallows_registration",
+                "domain_premium",
+            }:
+                results[domain] = {"status": "provider_unsupported"}
+            else:
+                results[domain] = {"status": "taken"}
         for domain in batch:
             results.setdefault(domain, {"status": "unknown"})
     return results
@@ -551,6 +992,12 @@ def check_rdap(domains, limiter, quiet):
 PROVIDERS = {
     "spaceship": check_spaceship,
     "namesilo": check_namesilo,
+    "godaddy": check_godaddy,
+    "namecom": check_namecom,
+    "namecheap": check_namecheap,
+    "dynadot": check_dynadot,
+    "porkbun": check_porkbun,
+    "cloudflare": check_cloudflare,
     "rdap": check_rdap,
 }
 
@@ -560,6 +1007,19 @@ def pick_provider() -> str:
         return "spaceship"
     if env("NAMESILO_API_KEY"):
         return "namesilo"
+    if env("GODADDY_PAT"):
+        return "godaddy"
+    if env("NAMECOM_USERNAME") and env("NAMECOM_API_TOKEN"):
+        return "namecom"
+    if (env("NAMECHEAP_API_USER") or env("NAMECHEAP_USERNAME")) and \
+            env("NAMECHEAP_API_KEY") and env("NAMECHEAP_CLIENT_IP"):
+        return "namecheap"
+    if env("DYNADOT_API_KEY"):
+        return "dynadot"
+    if env("PORKBUN_API_KEY") and env("PORKBUN_SECRET_API_KEY"):
+        return "porkbun"
+    if env("CLOUDFLARE_ACCOUNT_ID") and env("CLOUDFLARE_API_TOKEN"):
+        return "cloudflare"
     if env("DOMAIN_FINDER_ALLOW_RDAP") in ("1", "true", "yes"):
         return "rdap"
     return ""
@@ -570,7 +1030,15 @@ def requests_needed(provider: str, count: int) -> int:
         return -(-count // SPACESHIP_BATCH_SIZE)
     if provider == "namesilo":
         return -(-count // NAMESILO_BATCH_SIZE)
-    return count  # rdap: one per domain
+    if provider == "godaddy":
+        return -(-count // GODADDY_BATCH_SIZE)
+    if provider == "namecom":
+        return -(-count // NAMECOM_BATCH_SIZE)
+    if provider == "namecheap":
+        return -(-count // NAMECHEAP_BATCH_SIZE)
+    if provider == "cloudflare":
+        return -(-count // CLOUDFLARE_BATCH_SIZE)
+    return count  # one request per domain
 
 
 # --------------------------------------------------------------------------
@@ -581,6 +1049,7 @@ STATUS_LABEL = {
     "available": "available",
     "taken": "taken",
     "unsupported": "no RDAP for this TLD",
+    "provider_unsupported": "not supported by this provider",
     "error": "lookup failed",
     "unknown": "unknown",
 }
@@ -594,7 +1063,7 @@ def build_note(row: dict) -> str:
         notes.append(f"renewal {ren / reg:.1f}x the first year")
     if row.get("premium"):
         notes.append("premium domain — price differs")
-    if row["status"] == "unsupported":
+    if row["status"] in ("unsupported", "provider_unsupported"):
         notes.append("check manually at a registrar")
     if row["status"] == "error":
         notes.append("retry this one")
@@ -656,7 +1125,7 @@ def main() -> int:
                         default=_to_float(env("DOMAIN_FINDER_MAX_PRICE")),
                         help="Hide available domains above this first-year price (USD).")
     parser.add_argument("--no-price", action="store_true",
-                        help="Skip the Porkbun price lookup entirely.")
+                        help="Skip price lookups entirely.")
     parser.add_argument("--no-cache", action="store_true",
                         help="Ignore cached results and re-query every domain.")
     parser.add_argument("--plan", action="store_true",
@@ -686,8 +1155,9 @@ def main() -> int:
     if not provider:
         print("No availability provider configured.\n"
               "Set SPACESHIP_API_KEY + SPACESHIP_API_SECRET (recommended),\n"
-              "or NAMESILO_API_KEY, or DOMAIN_FINDER_ALLOW_RDAP=1 for the keyless\n"
-              "fallback. See references/environment.md.", file=sys.stderr)
+              "or one of the provider configurations in references/environment.md.\n"
+              "DOMAIN_FINDER_ALLOW_RDAP=1 is only an optional keyless fallback.",
+              file=sys.stderr)
         return 2
 
     limiter = RateLimiter(provider, args.quiet)
@@ -705,12 +1175,21 @@ def main() -> int:
     calls = requests_needed(provider, len(to_query))
     eta = limiter.estimate(calls)
 
+    price_source = env("DOMAIN_FINDER_PRICE_SOURCE", "porkbun").lower()
+    if price_source not in ("porkbun", "dynadot", "none"):
+        if not args.quiet:
+            print(f"  ! unknown DOMAIN_FINDER_PRICE_SOURCE={price_source!r}; using porkbun",
+                  file=sys.stderr)
+        price_source = "porkbun"
+
     if args.plan:
         print(f"provider:        {provider}")
         print(f"domains:         {len(domains)} ({len(cached)} cached, {len(to_query)} to query)")
-        print(f"requests:        {calls}")
+        print(f"availability requests: {calls}")
         print(f"budget:          {limiter.limit} requests / {limiter.window:.0f}s")
         print(f"estimated time:  {humanise(eta)}")
+        if not args.no_price and price_source == "dynadot":
+            print(f"price requests:  up to {len(domains)} (one per available domain)")
         return 0
 
     if not args.quiet and to_query:
@@ -725,23 +1204,41 @@ def main() -> int:
     cache.put_many({d: v for d, v in fresh.items()
                     if v.get("status") in ("available", "taken")})
 
-    pricing = {} if args.no_price else load_tld_prices(
-        env_int("DOMAIN_FINDER_PRICE_TTL", DEFAULT_PRICE_TTL), args.quiet)
+    if args.no_price or price_source == "none":
+        pricing = {}
+    elif price_source == "dynadot":
+        pricing = load_dynadot_prices(
+            [d for d in domains if (cached.get(d) or fresh.get(d) or {}).get("status") == "available"],
+            env_int("DOMAIN_FINDER_PRICE_TTL", DEFAULT_PRICE_TTL), args.quiet)
+    else:
+        pricing = load_tld_prices(
+            env_int("DOMAIN_FINDER_PRICE_TTL", DEFAULT_PRICE_TTL), args.quiet,
+            RateLimiter("porkbun", args.quiet))
 
     rows = []
     for domain in domains:
         entry = cached.get(domain) or fresh.get(domain) or {"status": "unknown"}
+        direct_price = entry.get("price") or {}
+        reference_price = price_for(domain, pricing)
+        merged_price = {**reference_price, **direct_price}
         row = {
             "domain": domain,
             "status": entry.get("status", "unknown"),
             "premium": entry.get("premium", False),
             "cached": entry.get("cached", False),
-            "price": price_for(domain, pricing),
+            "price": merged_price,
         }
+        if price_source == "dynadot" and row["domain"] in pricing:
+            row["premium"] = row["premium"] or pricing[row["domain"]].get("premium", False)
+            row["price"] = {
+                k: v for k, v in pricing[row["domain"]].items()
+                if k in ("registration", "renewal")
+            }
         row["note"] = build_note(row)
         rows.append(row)
 
-    failed = [r["domain"] for r in rows if r["status"] in ("error", "unknown")]
+    failed = [r["domain"] for r in rows
+              if r["status"] in ("error", "unknown", "unsupported", "provider_unsupported")]
 
     if args.available_only:
         rows = [r for r in rows if r["status"] == "available"]
@@ -756,8 +1253,16 @@ def main() -> int:
     else:
         print(render_table(rows) if rows else "No domains matched.")
         if pricing and rows:
-            print("\n> Prices are Porkbun list prices in USD, shown as a reference. "
-                  "Your registrar will differ. Premium domains are priced separately.")
+            if price_source == "dynadot":
+                print("\n> Prices are Dynadot's per-domain quotes in USD. "
+                      "Confirm the final price at checkout.")
+            elif any((r.get("price") or {}).get("registration") is not None
+                     for r in rows):
+                print("\n> Direct provider quotes are shown where available; "
+                      "otherwise prices are reference list prices. Confirm at checkout.")
+            else:
+                print("\n> Prices are Porkbun list prices in USD, shown as a reference. "
+                      "Your registrar will differ. Premium domains are priced separately.")
         if failed:
             print(f"\n> {len(failed)} domain(s) could not be resolved and are NOT "
                   f"confirmed available: {', '.join(failed[:10])}"

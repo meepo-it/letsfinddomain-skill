@@ -32,7 +32,7 @@ budget is already spent it sleeps until the oldest one ages out.
 Because the window lives on disk rather than in memory, budget spent by one
 invocation is still spent as far as the next invocation is concerned.
 
-### Advisory file locking
+### Advisory file locking and in-flight gates
 
 The state file is guarded with `flock`. Parallel processes take turns on
 read-modify-write, so six concurrent agents cannot each read "0 requests used"
@@ -41,6 +41,14 @@ and collectively fire six requests.
 Verified behaviour with a budget of 3 requests per 15 seconds and six processes
 launched simultaneously: three proceed immediately (spaced by the minimum
 interval), the rest block until the window rolls over.
+
+The checker also holds `.cache/inflight-<provider>.lock` for the duration of
+each HTTP request. The implementation is sequential inside one run and allows
+only one in-flight request per provider across processes. This is intentional:
+the provider rules below describe account/thread limits, not a license to run
+`gather()` against every registrar at once. Dynadot explicitly documents a
+one-thread regular account, and the other providers do not publish a general
+concurrency guarantee.
 
 ### Shared cooldown on 429
 
@@ -85,28 +93,47 @@ so a caller can distinguish partial success from success.
 $ python3 scripts/check-domains.py --plan --tlds com,ai,io,dev,app,xyz,net,org,co,me alpha beta gamma delta epsilon
 provider:        spaceship
 domains:         50 (0 cached, 50 to query)
-requests:        3
+availability requests: 3
 budget:          25 requests / 30s
 estimated time:  1s
 ```
 
 Use it before a large sweep.
 
-## Provider budgets
+## Provider policies
 
-| Provider | Documented limit | Default used here | Domains per request |
+The first column is what the provider currently documents. “Tool default” is a
+deliberately lower client budget, not a claim about the provider's quota. If a
+provider exposes response headers, those headers and `Retry-After` win at
+runtime. Sources are official documentation and were checked on 2026-07-27.
+
+| Provider | Official rule | Tool default / concurrency | Batch shape |
 |---|---|---|---|
-| Spaceship | 30 requests / user / 30s | **25 / 30s** | 20 |
-| NameSilo | not precisely published | **20 / 60s** (conservative) | ~20 (comma-separated) |
-| RDAP (rdap.org) | shared public proxy, unpublished | **60 / 60s**, min 1s apart | 1 |
-| Porkbun pricing | unpublished; called once/day | cached 24h | all TLDs at once |
+| Spaceship | 30 requests/user/30s; single-domain endpoint also caps 5/domain/300s | 25/30s; 1 in flight | 20 domains/request |
+| NameSilo | No fixed number published; automated batch traffic must use `/apibatch` | 20/60s; 1 in flight | 20 domains/request, `/apibatch` |
+| GoDaddy | Per-credential window; current rate-limit guide reports 600 per ~23-minute window and says values can change; other reference pages still say 60/min | 540/1380s; 1 in flight; honor server headers | 50 domains/request via v1 bulk endpoint |
+| Name.com | 20 requests/s and 3,000 requests/hour account-wide | 20/60s; 1 in flight | 50 domains/request |
+| Namecheap | 50/min, 700/hour, 8,000/day across the whole key | 45/60s; 1 in flight | 50 domains/request |
+| Dynadot | Regular: 1 thread, 60/min; Bulk: 5 threads, 600/min; Super Bulk: 35 threads, 6,000/min | Regular-safe default: 55/60s, 1s gap, 1 in flight | one search request/domain |
+| Porkbun | Some endpoints are rate limited; no universal number published; use `X-RateLimit-*` and reset data | 60/60s; 1 in flight | one domain/request |
+| Cloudflare API / Registrar | 1,200/5m per user/account token, 200/s per IP; Registrar check max 20 domains/request | 180/60s; 1 in flight | 20 domains/request |
+| RDAP (`rdap.org`) | No shared public quota guaranteed | 60/60s, 1s gap; 1 in flight | one domain/request |
+| Porkbun pricing | Endpoint-specific limits; fetched once and cached | shared Porkbun gate; cached 24h | all TLDs in one request |
 
-The Spaceship default is deliberately below the documented 30 so that a second
-tool sharing the key does not push the account over.
+Official references:
 
-The RDAP figure is not a published limit — it is a politeness budget. `rdap.org`
-is free infrastructure run for everyone's benefit; one request per second is the
-least we can do.
+- [Spaceship API](https://docs.spaceship.dev/) — availability limit and 1–20 domain batch.
+- [NameSilo automated batch policy](https://www.namesilo.com/support/v2/articles/account-options/api-automated-batch) — `/apibatch` requirement.
+- [GoDaddy rate-limit guide](https://developer.godaddy.com/en/docs/api-users/rate-limits) and [bulk availability endpoint](https://developer.godaddy.com/en/docs/references/rest/domains/v1/find-domains).
+- [Name.com Core API overview](https://docs.name.com/api/v1/overview) and [FAQ](https://docs.name.com/resources/faq).
+- [Namecheap API FAQ](https://www.namecheap.com/support/knowledgebase/article.aspx/9739/63/api-faq/).
+- [Dynadot API command list](https://www.dynadot.com/domain/api-commands).
+- [Porkbun API documentation](https://porkbun.com/api/json/v3/documentation/interactive).
+- [Cloudflare API 429 limits](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/4xx-client-error/error-429/) and [Registrar domain check](https://developers.cloudflare.com/api/resources/registrar/methods/check).
+
+The RDAP figure is not a published limit; it is a politeness budget for shared
+public infrastructure. “Unknown” or “lookup failed” remains unresolved and is
+never presented as available.
 
 ## Tuning
 
@@ -116,8 +143,20 @@ least we can do.
 | `DOMAIN_FINDER_SPACESHIP_WINDOW` | `30` | Window length in seconds |
 | `DOMAIN_FINDER_NAMESILO_LIMIT` | `20` | Max requests per window |
 | `DOMAIN_FINDER_NAMESILO_WINDOW` | `60` | Window length in seconds |
+| `DOMAIN_FINDER_GODADDY_LIMIT` | `540` | Max requests per window; server headers are authoritative |
+| `DOMAIN_FINDER_GODADDY_WINDOW` | `1380` | Conservative approximation of the current ~23-minute window |
+| `DOMAIN_FINDER_NAMECOM_LIMIT` | `20` | Max requests per window |
+| `DOMAIN_FINDER_NAMECOM_WINDOW` | `60` | Window length in seconds |
+| `DOMAIN_FINDER_NAMECHEAP_LIMIT` | `45` | Max requests per window; below the official 50/min |
+| `DOMAIN_FINDER_NAMECHEAP_WINDOW` | `60` | Window length in seconds |
 | `DOMAIN_FINDER_RDAP_LIMIT` | `60` | Max requests per window |
 | `DOMAIN_FINDER_RDAP_WINDOW` | `60` | Window length in seconds |
+| `DOMAIN_FINDER_DYNADOT_LIMIT` | `55` | Regular-account-safe budget; bulk tiers may override |
+| `DOMAIN_FINDER_DYNADOT_WINDOW` | `60` | Window length in seconds |
+| `DOMAIN_FINDER_PORKBUN_LIMIT` | `60` | Max requests per window |
+| `DOMAIN_FINDER_PORKBUN_WINDOW` | `60` | Window length in seconds |
+| `DOMAIN_FINDER_CLOUDFLARE_LIMIT` | `180` | Client budget below the global 1200/5m token limit |
+| `DOMAIN_FINDER_CLOUDFLARE_WINDOW` | `60` | Window length in seconds |
 | `DOMAIN_FINDER_CACHE_TTL` | `3600` | Availability cache lifetime, seconds. `0` disables |
 
 Lower the limits if you share a key. Raising them above what the provider

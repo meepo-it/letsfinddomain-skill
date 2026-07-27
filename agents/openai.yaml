@@ -1,0 +1,7 @@
+interface:
+  display_name: "Let's Find Domain"
+  short_description: "Generate and verify domain names with renewal prices"
+  default_prompt: "Use $letsfinddomain-skill to generate domain ideas, check availability in bulk, and compare renewal prices."
+
+policy:
+  allow_implicit_invocation: true

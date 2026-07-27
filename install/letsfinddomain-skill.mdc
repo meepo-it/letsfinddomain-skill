@@ -3,15 +3,19 @@ description: Find and check domain names — availability in bulk, first-year an
 alwaysApply: false
 ---
 
-# Domain Finder
+# Let's Find Domain
 
-Tools live in `tools/domain-finder-skill/`. Adjust the paths below if you
+Invoke this rule when the user asks for domain ideas or availability. The user
+should be able to describe the request in natural language; do not ask them to
+assemble Python commands unless they explicitly want terminal usage.
+
+Tools live in `tools/letsfinddomain-skill/`. Adjust the paths below if you
 cloned it somewhere else.
 
 ## Check availability
 
 ```bash
-python3 tools/domain-finder-skill/scripts/check-domains.py --tlds com,ai,io \
+python3 tools/letsfinddomain-skill/scripts/check-domains.py --tlds com,ai,io \
   snapkit vaultly forgely --available-only
 ```
 
@@ -24,9 +28,9 @@ Useful flags: `--available-only`, `--max-price 20`, `--json`, `--no-cache`,
 ## Generate candidates
 
 ```bash
-python3 tools/domain-finder-skill/scripts/gen-names.py \
+python3 tools/letsfinddomain-skill/scripts/gen-names.py \
   --roots snap,clip,vault --suffixes ify,ly,kit --max-len 6 \
-  | python3 tools/domain-finder-skill/scripts/check-domains.py \
+  | python3 tools/letsfinddomain-skill/scripts/check-domains.py \
       --tlds com --available-only
 ```
 
@@ -39,10 +43,11 @@ Patterns: `root+suffix`, `prefix+root`, `prefix+root+suffix`, `root+root`,
   3 requests; 60 single-domain calls cost 60 and will get throttled. Never loop
   the script over a list.
 - **Never guess availability.** If the tool is not configured, say so and point
-  at `tools/domain-finder-skill/references/environment.md`. Do not answer from
+  at `tools/letsfinddomain-skill/references/environment.md`. Do not answer from
   memory or from a web search.
 - **Never present an unresolved lookup as available.** `lookup failed`,
-  `unknown`, and `no RDAP for this TLD` are all "don't know", not "yes". The
+  `unknown`, `no RDAP for this TLD`, and `not supported by this provider` are all
+  "don't know", not "yes". The
   script exits `3` when anything is unresolved.
 - **Check brand collisions** before recommending a name. An available domain
   that collides with an established product is an SEO fight the user did not
@@ -50,4 +55,4 @@ Patterns: `root+suffix`, `prefix+root`, `prefix+root+suffix`, `root+root`,
 - **Read-only.** This never buys, transfers, or changes DNS. Purchases happen at
   the user's registrar.
 
-Full workflow: `tools/domain-finder-skill/AGENTS.md`
+Full workflow: `tools/letsfinddomain-skill/AGENTS.md`

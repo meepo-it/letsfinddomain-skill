@@ -1,10 +1,47 @@
-# Domain Finder — agent instructions
+# Let's Find Domain — agent instructions
 
 Instructions for any coding agent that reads `AGENTS.md` (Codex, Cursor,
 Copilot, Gemini CLI, Aider, Windsurf, Zed, and others).
 
 Claude Code users: [`SKILL.md`](SKILL.md) is the equivalent entry point, and it
 loads on demand rather than staying in context.
+
+---
+
+## Maintenance rules
+
+### Keep user-facing documentation bilingual
+
+`README.md` and `README.zh-CN.md` are a pair. Any change to user-facing
+workflow, installation, provider support, pricing, limits, or examples must be
+made in both files in the same change.
+
+Provider walkthroughs are also paired: every
+`docs/providers/*/setup.md` must have a matching
+`setup.zh-CN.md`. Keep their section order, numbered steps, environment
+variables, official URLs, screenshots, and verification flow aligned. The
+verification flow shown to users is `/letsfinddomain-skill`; do not replace it
+with direct Python commands in provider walkthroughs.
+
+Referral links, when valid and intentionally supported, belong only in the
+corresponding provider walkthrough link. Never add referral codes to README or
+invent one when the provider does not offer a confirmed program.
+
+Run the local repository test suite after documentation or code changes:
+
+```bash
+python3 scripts/test.py
+```
+
+The repository includes a Git `pre-commit` hook under `.githooks/` that runs the
+same suite. Enable it once after cloning:
+
+```bash
+python3 scripts/install-hooks.py
+```
+
+Do not create a commit while the suite is failing. The hook is local and does
+not require a network connection.
 
 ---
 
@@ -30,7 +67,9 @@ python3 scripts/check-domains.py example.com
 
 Expected output shows `example.com` as `taken`. If it prints
 `No availability provider configured`, direct the user to
-[`references/environment.md`](references/environment.md) and stop.
+[`references/environment.md`](references/environment.md) and stop. Supported
+availability providers are Spaceship, NameSilo, GoDaddy, Name.com, Namecheap,
+Dynadot, Porkbun, Cloudflare Registrar, and the optional RDAP fallback.
 
 **Do not fall back to guessing availability** from memory or a web search. A
 wrong "available" wastes the user's time at checkout and destroys their trust in
@@ -134,6 +173,7 @@ what the user wants from you, not a raw dump.
 | `available` | No registration record. Registrable, subject to premium pricing and registry reservations. |
 | `taken` | Registered. |
 | `no RDAP for this TLD` | The keyless fallback can't answer for this TLD. **Not a "no".** |
+| `not supported by this provider` | The selected provider can't answer this domain. **Not a "no".** |
 | `lookup failed` | Errored after retries. **Not confirmed available.** |
 | `unknown` | Unexpected provider response. Unresolved. |
 | Note `cached` | Up to an hour old. Re-check with `--no-cache` before purchase. |

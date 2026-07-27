@@ -1,10 +1,10 @@
 ---
-name: domain-finder
+name: letsfinddomain-skill
 description: Generate, check, and vet domain names. Use when the user wants domain name ideas, wants to check whether domains are available, or wants to compare registration and renewal prices across TLDs.
 allowed-tools: Bash, Read, WebSearch
 ---
 
-# Domain Finder
+# Let's Find Domain
 
 Help the user land on a domain they can actually register: generate candidates,
 check availability in bulk, attach reference prices, and flag the traps.
@@ -18,8 +18,11 @@ python3 scripts/check-domains.py example.com
 ```
 
 If it reports `No availability provider configured`, point the user at
-[`references/environment.md`](references/environment.md) and stop. Do not fall
-back to guessing availability from memory or from a web search — a wrong
+[`references/environment.md`](references/environment.md) and stop. The supported
+registrar providers are Spaceship, NameSilo, GoDaddy, Name.com, Namecheap,
+Dynadot, Porkbun, and Cloudflare Registrar; RDAP is an optional keyless trial
+fallback. Do not fall back to guessing availability from memory or from a web
+search — a wrong
 "available" wastes the user's time at checkout.
 
 ## This skill has no built-in taste
@@ -61,9 +64,10 @@ python3 scripts/gen-names.py --roots snap,clip,vault --suffixes ify,ly,kit \
   --max-len 6 | python3 scripts/check-domains.py --tlds com --available-only
 ```
 
-Generate generously. Availability checking is cheap (20 domains per request)
-and most good names are already taken, so 20–40 candidates is a reasonable
-first pass, not overkill.
+Generate generously. Availability checking is batched where the selected
+provider supports it, and most good names are already taken, so 20–40
+candidates is a reasonable first pass, not overkill. Provider setup paths and
+batch limits are in [`references/environment.md`](references/environment.md).
 
 Apply the user's stated constraints while generating, not after. If they said
 "max 6 characters", don't produce 9-character candidates and filter them later —
@@ -86,7 +90,10 @@ python3 scripts/check-domains.py --tlds com snapkit vaultly \
 python3 scripts/check-domains.py --json snapkit.com
 ```
 
-The script batches, respects rate limits, and attaches prices automatically.
+The script uses each provider's documented batch shape, a shared cross-process
+rate budget, and one in-flight request per provider. It never blindly fans out
+requests; see [`references/rate-limits.md`](references/rate-limits.md) before
+changing a provider budget or adding a new integration.
 
 **Pass the whole candidate list in one call.** One call with 60 domains costs 3
 requests; 60 calls with one domain each cost 60 and will get the user throttled.
