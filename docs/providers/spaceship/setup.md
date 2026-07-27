@@ -13,7 +13,8 @@ Sign in to [Spaceship](https://www.spaceship.com/), then open
 ## 2. Create credentials
 
 Create a new API key and secret. Keep both values private; the secret may only
-be shown once. Put them in the repository `.env` file:
+be shown once. Set them as system environment variables (recommended); see the
+[cross-platform setup](../../../references/environment.md#system-environment-variables):
 
 ```dotenv
 SPACESHIP_API_KEY=your_key

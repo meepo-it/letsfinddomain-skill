@@ -11,7 +11,7 @@ Spaceship 的可用性接口一次最多支持查询 20 个域名，因此作为
 
 ## 2. 创建凭据
 
-创建新的 API Key 和 Secret。请妥善保管，Secret 可能只显示一次。把它们写入仓库的 `.env` 文件：
+创建新的 API Key 和 Secret。请妥善保管，Secret 可能只显示一次。建议将它们设置为系统环境变量，具体见[跨平台配置](../../../references/environment.md#system-environment-variables)：
 
 ```dotenv
 SPACESHIP_API_KEY=你的_key

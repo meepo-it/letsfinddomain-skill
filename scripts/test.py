@@ -79,6 +79,14 @@ class RepositoryTests(unittest.TestCase):
 
             self.assertIn("/letsfinddomain-skill", en_text)
             self.assertIn("/letsfinddomain-skill", zh_text)
+            self.assertIn(
+                "../../../references/environment.md#system-environment-variables",
+                en_text,
+            )
+            self.assertIn(
+                "../../../references/environment.md#system-environment-variables",
+                zh_text,
+            )
             self.assertNotIn("python3 scripts/check-domains.py", en_text)
             self.assertNotIn("python3 scripts/check-domains.py", zh_text)
 
@@ -103,11 +111,23 @@ class RepositoryTests(unittest.TestCase):
             self.assertIn(display, zh)
         self.assertIn("Spaceship (default)", en)
         self.assertIn("Spaceship（默认）", zh)
+        self.assertIn("system environment variables", en.lower())
+        self.assertIn("系统环境变量", zh)
         self.assertEqual(
             len(re.findall(r"^## ", en, re.MULTILINE)),
             len(re.findall(r"^## ", zh, re.MULTILINE)),
             "README section structure differs",
         )
+
+    def test_cross_platform_environment_guide(self):
+        guide = read(ROOT / "references" / "environment.md")
+        for heading in (
+            "### macOS",
+            "### Linux",
+            "### Windows PowerShell",
+            "### Windows Command Prompt",
+        ):
+            self.assertIn(heading, guide)
 
     def test_local_markdown_links(self):
         missing = []

@@ -57,6 +57,8 @@ npx skills add https://github.com/meepo-it/letsfinddomain-skill \
 
 如果想获得可靠的注册商查询结果和批量查询，建议优先配置 Spaceship。只要填写它的两个配置项，skill 就会默认优先使用 Spaceship 查询可用性。由于 Spaceship 的可用性接口不提供普通域名价格，价格默认使用 Porkbun 的公开 TLD 价格表作为参考。具体权限和速率取决于你的账号等级及平台规则。
 
+建议把 Provider 凭据设置为系统环境变量，这样安装后的 slash skill 在任何目录都能使用。请按照[macOS、Linux 或 Windows 配置步骤](references/environment.md#system-environment-variables)操作。本地仓库仍然支持使用 `.env` 文件。
+
 可以从推荐的 [Spaceship 配置说明](docs/providers/spaceship/setup.zh-CN.md) 开始，也可以选择你正在使用的注册商。每份说明都包含官方地址、准确页面路径、1/2/3 步骤、所需配置项和截图。
 
 | 平台 | 批量 / skill 默认并发策略 | 配置说明 |

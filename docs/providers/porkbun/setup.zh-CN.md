@@ -11,7 +11,7 @@ Porkbun 有两条可用路径：公开 TLD 价格列表不需要凭据；使用�
 
 ## 2. 创建 API Key 对
 
-创建新的 API Key 和 Secret。请立即复制 Secret；如有需要，可以按 IP 地址或域名限制这个 Key。把两个值写入 skill 的 `.env`：
+创建新的 API Key 和 Secret。请立即复制 Secret；如有需要，可以按 IP 地址或域名限制这个 Key。建议将两个值设置为系统环境变量，具体见[跨平台配置](../../../references/environment.md#system-environment-variables)：
 
 ```dotenv
 PORKBUN_API_KEY=你的_api_key

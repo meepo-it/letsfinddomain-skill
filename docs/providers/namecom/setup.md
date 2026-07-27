@@ -12,7 +12,8 @@ Sign in to [Name.com](https://www.name.com/), then open
 ## 2. Create a production token
 
 Create an API token for the production account. Keep the username and token
-together and add them to `.env`:
+together and set them as system environment variables (recommended); see the
+[cross-platform setup](../../../references/environment.md#system-environment-variables):
 
 ```dotenv
 NAMECOM_USERNAME=your_username

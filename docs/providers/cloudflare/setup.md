@@ -15,7 +15,9 @@ and accepted registration agreement.
 ## 2. Create an API token
 
 Open **My Profile → API Tokens → Create Token** and grant the Registrar API
-permissions described in the official guide. Add both values to `.env`:
+permissions described in the official guide. Set both values as system
+environment variables (recommended); see the
+[cross-platform setup](../../../references/environment.md#system-environment-variables):
 
 ```dotenv
 CLOUDFLARE_ACCOUNT_ID=your_account_id

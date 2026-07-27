@@ -10,7 +10,7 @@ Dynadot 普通 Regular 账号默认是单线程、约每秒一个请求。本 sk
 
 ## 2. 创建或复制 API Key
 
-启用 API 访问并创建或复制 API Key，写入 `.env`：
+启用 API 访问并创建或复制 API Key。建议将它设置为系统环境变量，具体见[跨平台配置](../../../references/environment.md#system-environment-variables)：
 
 ```dotenv
 DYNADOT_API_KEY=你的_api_key

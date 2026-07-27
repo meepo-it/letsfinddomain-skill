@@ -13,7 +13,9 @@ Sign in to [Porkbun](https://porkbun.com/account), then open
 ## 2. Create an API key pair
 
 Create a new API key and secret. Copy the secret immediately and, if needed,
-restrict the key by IP address or domain. Add both values to the skill's `.env`:
+restrict the key by IP address or domain. Set both values as system environment
+variables (recommended); see the
+[cross-platform setup](../../../references/environment.md#system-environment-variables):
 
 ```dotenv
 PORKBUN_API_KEY=your_api_key

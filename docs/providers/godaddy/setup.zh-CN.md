@@ -11,7 +11,7 @@
 
 ## 2. 创建 Personal Access Token
 
-创建 PAT，并只授予 `domains.domain:read` 权限。复制 Token 后写入 `.env`：
+创建 PAT，并只授予 `domains.domain:read` 权限。复制 Token 后，建议将它设置为系统环境变量，具体见[跨平台配置](../../../references/environment.md#system-environment-variables)：
 
 ```dotenv
 GODADDY_PAT=你的_personal_access_token

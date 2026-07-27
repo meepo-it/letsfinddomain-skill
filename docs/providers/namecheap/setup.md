@@ -14,7 +14,9 @@ the integration in the sandbox first.
 ## 2. Enable access and whitelist IPv4
 
 Enable API access, accept the terms, and add the public IPv4 address of the
-machine that will run the skill. Add all required values to `.env`:
+machine that will run the skill. Set all required values as system environment
+variables (recommended); see the
+[cross-platform setup](../../../references/environment.md#system-environment-variables):
 
 ```dotenv
 NAMECHEAP_API_USER=your_api_user

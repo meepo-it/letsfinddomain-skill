@@ -11,7 +11,7 @@ NameSilo 支持批量查询。自动化批量请求必须使用 `/apibatch` 接�
 
 ## 2. 生成 API Key
 
-生成 API Key，并按需配置 IP 限制。NameSilo 只会在生成时显示新 Key，请立即安全保存，然后写入 `.env`：
+生成 API Key，并按需配置 IP 限制。NameSilo 只会在生成时显示新 Key，请立即安全保存。建议将它设置为系统环境变量，具体见[跨平台配置](../../../references/environment.md#system-environment-variables)：
 
 ```dotenv
 NAMESILO_API_KEY=你的_key

@@ -30,6 +30,90 @@ For the user-facing 1/2/3 setup walkthroughs with screenshots, use the provider
 guides in [`docs/providers/`](../docs/providers/). This file remains the complete
 configuration reference, including every environment variable and fallback.
 
+## System environment variables
+
+For an installed `/letsfinddomain-skill`, system environment variables are the
+recommended setup. They work regardless of the directory from which the slash
+skill is invoked. Use the variable names shown in the provider sections below;
+the examples use Spaceship because it is the default availability provider.
+
+Set only the provider you intend to use. If several providers are configured,
+the script follows the priority order documented below, with Spaceship first.
+System variables take precedence over values in a local `.env` file.
+
+### macOS
+
+For the current terminal session:
+
+```bash
+export SPACESHIP_API_KEY="your_key"
+export SPACESHIP_API_SECRET="your_secret"
+```
+
+For new Terminal shells, add the same two `export` lines to `~/.zshrc`, then
+open a new terminal or run `source ~/.zshrc`. To make the values available to
+new GUI applications launched by macOS, you can also run:
+
+```bash
+launchctl setenv SPACESHIP_API_KEY "your_key"
+launchctl setenv SPACESHIP_API_SECRET "your_secret"
+```
+
+### Linux
+
+For the current shell:
+
+```bash
+export SPACESHIP_API_KEY="your_key"
+export SPACESHIP_API_SECRET="your_secret"
+```
+
+For future shells, add the same lines to `~/.profile` (or your shell's startup
+file, such as `~/.bashrc` or `~/.zshrc`), then open a new terminal or source
+that file.
+
+### Windows PowerShell
+
+For the current PowerShell session:
+
+```powershell
+$env:SPACESHIP_API_KEY = "your_key"
+$env:SPACESHIP_API_SECRET = "your_secret"
+```
+
+To persist them for your Windows user and make them available to new apps:
+
+```powershell
+[Environment]::SetEnvironmentVariable("SPACESHIP_API_KEY", "your_key", "User")
+[Environment]::SetEnvironmentVariable("SPACESHIP_API_SECRET", "your_secret", "User")
+```
+
+Close and reopen the terminal or AI application after changing persistent
+variables.
+
+### Windows Command Prompt
+
+For future Command Prompt sessions, use `setx`:
+
+```bat
+setx SPACESHIP_API_KEY "your_key"
+setx SPACESHIP_API_SECRET "your_secret"
+```
+
+`setx` does not update the current window. Open a new Command Prompt or AI
+application after running it.
+
+### Verify without exposing a key
+
+Return to `/letsfinddomain-skill` and ask:
+
+```text
+Check example.com and show its availability and renewal price.
+```
+
+Never paste a real key into README, screenshots, Git, issue reports, or shell
+history. Rotate a key immediately if it is exposed.
+
 ## Required: one availability provider
 
 You need exactly one. Spaceship is the default availability provider and the
@@ -47,7 +131,8 @@ balance and no IP allowlist.
 1. Sign up at <https://www.spaceship.com/>
 2. Open the [API Manager](https://www.spaceship.com/application/api-manager/)
 3. Create an API key — you get a key and a secret, both needed
-4. Paste both into `.env`
+4. Set both as system environment variables (recommended), or put them in a
+   local `.env` file for a checkout of this repository
 
 The secret is shown once. If you lose it, generate a new pair.
 
@@ -70,7 +155,8 @@ selected price source. GoDaddy's server `RateLimit-*` headers are honored.
 2. Open **API Users → Personal Access Tokens**
 3. Choose **Generate Token** and grant the `domains.domain:read` scope
 4. Copy the token immediately; GoDaddy displays it once
-5. Set `GODADDY_PAT` in `.env`
+5. Set `GODADDY_PAT` as a system environment variable, or put it in a local
+   `.env` file for a checkout of this repository
 
 The script only calls the read endpoint; it cannot purchase or modify domains.
 
@@ -82,7 +168,8 @@ premium status, registration price, and renewal price.
 1. Sign in to [Name.com](https://www.name.com/)
 2. Open **Account Settings → API Tokens**
 3. Create a token at <https://www.name.com/account/settings/api>
-4. Set `NAMECOM_USERNAME` and `NAMECOM_API_TOKEN` in `.env`
+4. Set `NAMECOM_USERNAME` and `NAMECOM_API_TOKEN` as system environment
+   variables, or put them in a local `.env` file for a checkout
 
 ### Namecheap — XML API and IPv4 allowlist
 
@@ -110,7 +197,8 @@ and can include a current price sentence.
 1. Sign in to [Dynadot](https://www.dynadot.com/)
 2. Open **Account Control Panel → Tools → API**
 3. Create or copy the API key
-4. Set `DYNADOT_API_KEY` in `.env`
+4. Set `DYNADOT_API_KEY` as a system environment variable, or put it in a
+   local `.env` file for a checkout
 
 The setup page and command reference are in the
 [Dynadot API documentation](https://www.dynadot.com/domain/api-commands).
@@ -124,7 +212,8 @@ default reference-price source.
 1. Sign in to [Porkbun](https://porkbun.com/)
 2. Open [Account → API Access](https://porkbun.com/account/api)
 3. Create an API key pair and copy the secret immediately
-4. Set `PORKBUN_API_KEY` and `PORKBUN_SECRET_API_KEY` in `.env`
+4. Set `PORKBUN_API_KEY` and `PORKBUN_SECRET_API_KEY` as system environment
+   variables, or put them in a local `.env` file for a checkout
 
 ### `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` — Cloudflare Registrar
 
@@ -138,7 +227,8 @@ agreement before the Registrar API can be used.
 2. Open **My Profile → API Tokens → Create Token**
 3. Create a token with the Registrar permissions described in the
    [Cloudflare Registrar API guide](https://developers.cloudflare.com/registrar/registrar-api/)
-4. Set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` in `.env`
+4. Set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` as system
+   environment variables, or put them in a local `.env` file for a checkout
 
 For a general-purpose naming sweep, Spaceship, Name.com, or GoDaddy is usually
 less restrictive.

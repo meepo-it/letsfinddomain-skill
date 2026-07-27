@@ -10,7 +10,7 @@ Namecheap 需要先开通生产环境 API，并把运行 skill 的机器公网 I
 
 ## 2. 开通访问并加入 IPv4 白名单
 
-启用 API 访问、接受条款，并添加运行 skill 的机器公网 IPv4。把以下配置写入 `.env`：
+启用 API 访问、接受条款，并添加运行 skill 的机器公网 IPv4。建议将以下配置设置为系统环境变量，具体见[跨平台配置](../../../references/environment.md#system-environment-variables)：
 
 ```dotenv
 NAMECHEAP_API_USER=你的_api_user

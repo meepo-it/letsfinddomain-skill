@@ -11,7 +11,7 @@ Name.com Core API 一次可在可用性请求中查询最多 50 个域名。
 
 ## 2. 创建生产环境 Token
 
-为生产环境账号创建 API Token，将用户名和 Token 一起写入 `.env`：
+为生产环境账号创建 API Token，将用户名和 Token 一起设置为系统环境变量，具体见[跨平台配置](../../../references/environment.md#system-environment-variables)：
 
 ```dotenv
 NAMECOM_USERNAME=你的_username

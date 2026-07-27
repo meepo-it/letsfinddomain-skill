@@ -11,7 +11,7 @@ Cloudflare Registrar 查询需要账号 ID 和 API Token。目前 Registrar API 
 
 ## 2. 创建 API Token
 
-打开 **My Profile → API Tokens → Create Token**，按照官方文档授予 Registrar API 所需权限，然后把两个值写入 `.env`：
+打开 **My Profile → API Tokens → Create Token**，按照官方文档授予 Registrar API 所需权限。建议将两个值设置为系统环境变量，具体见[跨平台配置](../../../references/environment.md#system-environment-variables)：
 
 ```dotenv
 CLOUDFLARE_ACCOUNT_ID=你的_account_id

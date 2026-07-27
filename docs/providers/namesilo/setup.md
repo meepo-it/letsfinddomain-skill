@@ -13,7 +13,9 @@ Sign up or sign in to [NameSilo](https://www.namesilo.com/?rid=2f35224vs), then 
 ## 2. Generate an API key
 
 Generate a key and optionally configure IP restrictions. NameSilo displays a
-new key only after generation, so store it safely. Add it to `.env`:
+new key only after generation, so store it safely. Set it as a system
+environment variable (recommended); see the
+[cross-platform setup](../../../references/environment.md#system-environment-variables):
 
 ```dotenv
 NAMESILO_API_KEY=your_key

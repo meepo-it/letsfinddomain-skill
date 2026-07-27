@@ -64,6 +64,11 @@ Spaceship does not expose ordinary-domain prices through its availability API.
 Your account tier and the provider's rules determine the exact permissions and
 rate limits.
 
+Set provider credentials as system environment variables so the installed slash
+skill can use them from any folder. Follow the [macOS, Linux, or Windows setup
+steps](references/environment.md#system-environment-variables). A local `.env`
+file remains supported for a checkout of this repository.
+
 Start with [Spaceship setup](docs/providers/spaceship/setup.md), or choose a
 registrar you already use below. Each guide has the official URL, the exact
 page path, numbered steps, required variables, and screenshots.

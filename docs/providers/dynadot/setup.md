@@ -12,7 +12,9 @@ Sign up or sign in to [Dynadot](https://www.dynadot.com/?7F7B7B8j9N9A8a7z), then
 
 ## 2. Create or copy the API key
 
-Enable API access and create or copy the API key. Add it to `.env`:
+Enable API access and create or copy the API key. Set it as a system
+environment variable (recommended); see the
+[cross-platform setup](../../../references/environment.md#system-environment-variables):
 
 ```dotenv
 DYNADOT_API_KEY=your_api_key

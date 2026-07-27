@@ -12,8 +12,9 @@ open [How to Authenticate](https://developer.godaddy.com/en/docs/api-users/auth/
 
 ## 2. Create a Personal Access Token
 
-Create a PAT with the `domains.domain:read` scope. Copy it immediately and put
-it in `.env`:
+Create a PAT with the `domains.domain:read` scope. Copy it immediately and set
+it as a system environment variable (recommended); see the
+[cross-platform setup](../../../references/environment.md#system-environment-variables):
 
 ```dotenv
 GODADDY_PAT=your_personal_access_token
