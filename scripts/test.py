@@ -126,6 +126,11 @@ class RepositoryTests(unittest.TestCase):
         self.assertIn(update_command, zh)
         self.assertIn("does not silently update", en)
         self.assertIn("不会静默自动更新", zh)
+        for tool in ("Claude Code", "Codex", "Cursor"):
+            self.assertIn(tool, en)
+            self.assertIn(tool, zh)
+        self.assertIn("--agent claude-code", en)
+        self.assertIn("--agent codex", zh)
 
     def test_cross_platform_environment_guide(self):
         guide = read(ROOT / "references" / "environment.md")

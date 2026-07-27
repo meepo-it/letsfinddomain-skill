@@ -24,6 +24,10 @@ npx skills add https://github.com/meepo-it/letsfinddomain-skill \
   --skill letsfinddomain-skill --agent '*' --global --yes
 ```
 
+这条命令会把 skill 全局安装到支持的工具中，包括 Claude Code、Codex 和 Cursor，不需要为每个工具重复安装。安装或更新后，重新打开对应工具或会话，再输入 `/letsfinddomain-skill` 即可。
+
+如果只想安装到某一个工具，可以把 `--agent '*'` 换成 `--agent claude-code`、`--agent codex` 或 `--agent cursor`。
+
 ### 更新
 
 发布新版本后，手动执行：

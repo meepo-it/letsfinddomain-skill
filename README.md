@@ -25,6 +25,14 @@ npx skills add https://github.com/meepo-it/letsfinddomain-skill \
   --skill letsfinddomain-skill --agent '*' --global --yes
 ```
 
+This installs the skill globally for supported tools, including Claude Code,
+Codex, and Cursor. You do not need to install it separately for each tool.
+After installing or updating, reopen the tool or session and use
+`/letsfinddomain-skill`.
+
+To install for only one tool, replace `--agent '*'` with `--agent claude-code`,
+`--agent codex`, or `--agent cursor`.
+
 ### Update
 
 When a new version is released, update the global installation with:
