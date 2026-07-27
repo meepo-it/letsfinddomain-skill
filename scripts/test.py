@@ -129,6 +129,17 @@ class RepositoryTests(unittest.TestCase):
         ):
             self.assertIn(heading, guide)
 
+    def test_user_facing_entrypoints_stay_concise(self):
+        for path in (
+            ROOT / "SKILL.md",
+            ROOT / "install" / "letsfinddomain-skill.mdc",
+            ROOT / "install" / "agents-snippet.md",
+        ):
+            content = read(path)
+            self.assertNotIn("python3 scripts/check-domains.py", content, path)
+            self.assertNotIn("Before anything else", content, path)
+        self.assertIn("run a standalone", read(ROOT / "SKILL.md"))
+
     def test_local_markdown_links(self):
         missing = []
         for path in ROOT.rglob("*.md"):

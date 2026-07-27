@@ -1,58 +1,30 @@
 ---
-description: Find and check domain names — availability in bulk, first-year and renewal prices. Use when the user wants domain ideas, wants to know whether a domain is free, or is naming a project.
+description: Find and check domain names with confirmed availability, first-year prices, and renewal prices. Use when the user wants domain ideas, availability checks, or naming help.
 alwaysApply: false
 ---
 
 # Let's Find Domain
 
-Invoke this rule when the user asks for domain ideas or availability. The user
-should be able to describe the request in natural language; do not ask them to
-assemble Python commands unless they explicitly want terminal usage.
-
-Tools live in `tools/letsfinddomain-skill/`. Adjust the paths below if you
-cloned it somewhere else.
-
-## Check availability
-
-```bash
-python3 tools/letsfinddomain-skill/scripts/check-domains.py --tlds com,ai,io \
-  snapkit vaultly forgely --available-only
-```
-
-Output includes first-year **and renewal** price. The renewal column matters:
-`.xyz` costs $2.04 the first year and $12.98 every year after.
-
-Useful flags: `--available-only`, `--max-price 20`, `--json`, `--no-cache`,
-`--plan` (preview request cost without spending it).
-
-## Generate candidates
-
-```bash
-python3 tools/letsfinddomain-skill/scripts/gen-names.py \
-  --roots snap,clip,vault --suffixes ify,ly,kit --max-len 6 \
-  | python3 tools/letsfinddomain-skill/scripts/check-domains.py \
-      --tlds com --available-only
-```
-
-Patterns: `root+suffix`, `prefix+root`, `prefix+root+suffix`, `root+root`,
-`blend`.
+Invoke this rule when the user asks for domain ideas, availability, or help
+choosing a project name. Let the user describe the request naturally; do not
+ask them to assemble Python commands.
 
 ## Rules
 
-- **Pass the whole candidate list in one call.** One call with 60 domains costs
-  3 requests; 60 single-domain calls cost 60 and will get throttled. Never loop
-  the script over a list.
-- **Never guess availability.** If the tool is not configured, say so and point
-  at `tools/letsfinddomain-skill/references/environment.md`. Do not answer from
-  memory or from a web search.
-- **Never present an unresolved lookup as available.** `lookup failed`,
-  `unknown`, `no RDAP for this TLD`, and `not supported by this provider` are all
-  "don't know", not "yes". The
-  script exits `3` when anything is unresolved.
-- **Check brand collisions** before recommending a name. An available domain
-  that collides with an established product is an SEO fight the user did not
-  choose.
-- **Read-only.** This never buys, transfers, or changes DNS. Purchases happen at
-  the user's registrar.
+- Start with the user's request. Do not run a standalone environment preflight
+  or check `example.com` unless the user asks for that domain.
+- Keep normal replies concise and user-facing. Do not show Python commands,
+  setup logs, or every provider option unless the user asks for technical detail.
+- If the user asks only for ideas, generate them without blocking on API setup.
+- If availability is requested, pass the complete candidate list in one batch and
+  respect the provider's rate limits.
+- Never guess availability. If no provider is configured, say availability
+  cannot be confirmed and link to the environment setup reference.
+- Never present `unknown`, `lookup failed`, `no RDAP for this TLD`, or
+  `not supported by this provider` as available.
+- Always include registration and renewal prices when they are available, and
+  flag premium pricing or large renewal increases.
+- Check obvious brand collisions before recommending a name.
+- Keep the skill read-only: it never buys, transfers, or changes DNS.
 
 Full workflow: `tools/letsfinddomain-skill/AGENTS.md`
